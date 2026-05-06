@@ -11,11 +11,10 @@ export default function RootLayout({ children }) {
   return (
     <html lang="en" suppressHydrationWarning>
       <body className="antialiased bg-gray-50 dark:bg-[#050505] transition-colors duration-300">
-        <ThemeProvider>
+       
           <ToastProvider>
             {children}
           </ToastProvider>
-        </ThemeProvider>
       </body>
     </html>
   );

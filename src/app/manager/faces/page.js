@@ -1,64 +1,45 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
+import * as faceapi from "face-api.js";
 import { callApi } from "@/lib/apiClient";
 import {
-  Camera,
-  RefreshCw,
-  Loader2,
-  Search,
-  UserCircle2,
-  CheckCircle2,
-  AlertTriangle,
-  ScanFace,
+  ScanFace, Loader2, AlertCircle, CheckCircle2,
+  Camera, Users, Search, UserCircle2, AlertTriangle, ShieldCheck
 } from "lucide-react";
 
-const FACE_API_CDN = "https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js";
+// --- Configuration ---
+const SCAN_INTERVAL_MS = 150; // Faster interval for smooth tracking
 
-function loadScript(src) {
-  return new Promise((resolve, reject) => {
-    const existing = document.querySelector(`script[src="${src}"]`);
-    if (existing) {
-      if (window.faceapi) return resolve();
-      existing.addEventListener("load", resolve, { once: true });
-      existing.addEventListener("error", reject, { once: true });
-      return;
-    }
-
-    const script = document.createElement("script");
-    script.src = src;
-    script.async = true;
-    script.onload = resolve;
-    script.onerror = reject;
-    document.body.appendChild(script);
-  });
-}
-
+// Helper to check permissions
 function hasPermission(permissions, key, mode = "write") {
-  const p = permissions?.[key] || permissions?.register_faces;
-  return !!p?.[mode] || !!p?.write || !!p?.read;
+  const p = permissions?.[key] || permissions?.register_face;
+  return !!p?.[mode] || !!p?.write;
 }
 
 export default function ManagerFacesPage() {
   const router = useRouter();
+  
+  // State
+  const [session, setSession] = useState(null);
+  const [staff, setStaff] = useState([]);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedId, setSelectedId] = useState("");
+  
+  const [loading, setLoading] = useState(true);
+  const [modelsReady, setModelsReady] = useState(false);
+  const [cameraReady, setCameraReady] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [systemMessage, setSystemMessage] = useState({ text: "Initializing engine...", type: "loading" });
+
+  // Refs
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
-
-  const [session, setSession] = useState(null);
-  const [loadingPage, setLoadingPage] = useState(true);
-  const [modelsReady, setModelsReady] = useState(false);
-  const [cameraReady, setCameraReady] = useState(false);
-  const [loadingRoster, setLoadingRoster] = useState(true);
-  const [saving, setSaving] = useState(false);
-
-  const [staff, setStaff] = useState([]);
-  const [selectedId, setSelectedId] = useState("");
-  const [query, setQuery] = useState("");
-  const [notes, setNotes] = useState("");
-  const [statusText, setStatusText] = useState("Loading face engine...");
-  const [errorText, setErrorText] = useState("");
+  const scanIntervalRef = useRef(null);
+  const processingRef = useRef(false);
+  const latestDescriptorRef = useRef(null); // Stores the live tracked face
 
   const permissions = useMemo(() => session?.feature_permissions || {}, [session]);
 
@@ -68,72 +49,70 @@ export default function ManagerFacesPage() {
   );
 
   const filteredStaff = useMemo(() => {
-    const q = query.toLowerCase();
-    return staff.filter((u) => {
-      const txt = `${u.name || ""} ${u.role || ""} ${u.department || ""} ${u.mobile_number || ""}`.toLowerCase();
-      return txt.includes(q);
-    });
-  }, [staff, query]);
+    const q = searchQuery.toLowerCase();
+    return staff.filter((u) => 
+      `${u.name} ${u.role} ${u.mobile_number}`.toLowerCase().includes(q)
+    );
+  }, [staff, searchQuery]);
 
+  // ─── INITIALIZATION ────────────────────────────────────────────────────────
   useEffect(() => {
+    const raw = localStorage.getItem("caketown_session");
+    if (!raw) { router.push("/"); return; }
+    
     try {
-      const raw = localStorage.getItem("caketown_session");
-      const parsed = raw ? JSON.parse(raw) : null;
-      if (!parsed || parsed.role !== "manager") {
-        router.push("/");
-        return;
-      }
+      const parsed = JSON.parse(raw);
+      if (parsed.role !== "manager") { router.push("/"); return; }
       setSession(parsed);
+      fetchStaff(parsed.branch_id);
     } catch {
       router.push("/");
-    } finally {
-      setLoadingPage(false);
     }
   }, [router]);
 
+  useEffect(() => {
+    if (session?.branch_id && hasPermission(session.feature_permissions, "register_face", "write")) {
+      bootFaceEngine();
+    }
+    return () => stopCamera();
+  }, [session]);
+
   const fetchStaff = async (branchId) => {
-    setLoadingRoster(true);
     const res = await callApi("get_branch_staff", { branch_id: branchId });
     if (res?.status === "success") {
       setStaff(res.data || []);
-      if (!selectedId && res.data?.length) setSelectedId(String(res.data[0].id));
     } else {
-      setErrorText(res?.message || "Failed to load branch staff.");
+      setSystemMessage({ text: res?.message || "Failed to load staff.", type: "error" });
     }
-    setLoadingRoster(false);
+    setLoading(false);
   };
 
   const bootFaceEngine = async () => {
     try {
-      setErrorText("");
-      setStatusText("Loading face engine...");
-      await loadScript(FACE_API_CDN);
-
-      const faceapi = window.faceapi;
+      setSystemMessage({ text: "Loading AI models...", type: "loading" });
+      const MODEL_URL = "/models";
+      
       await Promise.all([
-        faceapi.nets.tinyFaceDetector.loadFromUri("/models"),
-        faceapi.nets.faceLandmark68Net.loadFromUri("/models"),
-        faceapi.nets.faceRecognitionNet.loadFromUri("/models"),
+        faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+        faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+        faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
       ]);
-
+      
       setModelsReady(true);
-      setStatusText("Face models loaded");
-    } catch {
-      setErrorText("Unable to load face recognition models.");
-      setStatusText("Model load failed");
+      startCamera();
+    } catch (err) {
+      console.error(err);
+      setSystemMessage({ text: "Failed to load face models.", type: "error" });
     }
   };
 
   const startCamera = async () => {
     try {
-      setErrorText("");
-      setStatusText("Opening camera...");
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((t) => t.stop());
-      }
+      setSystemMessage({ text: "Starting camera...", type: "loading" });
+      if (streamRef.current) streamRef.current.getTracks().forEach((t) => t.stop());
 
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "user", width: { ideal: 960 }, height: { ideal: 540 } },
+        video: { facingMode: "user", width: { ideal: 720 }, height: { ideal: 960 } },
         audio: false,
       });
 
@@ -144,282 +123,253 @@ export default function ManagerFacesPage() {
       }
 
       setCameraReady(true);
-      setStatusText("Camera ready");
-    } catch {
-      setErrorText("Camera access failed. Please allow camera permission.");
-      setStatusText("Camera failed");
+      setSystemMessage({ text: "Camera ready. Select an employee.", type: "idle" });
+    } catch (err) {
+      console.error(err);
+      setSystemMessage({ text: "Camera access denied or unavailable.", type: "error" });
     }
   };
 
-  useEffect(() => {
-    if (!session?.branch_id) return;
-    if (!hasPermission(permissions, "register_face", "write")) return;
+  const stopCamera = () => {
+    if (scanIntervalRef.current) clearInterval(scanIntervalRef.current);
+    if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
+    if (videoRef.current) videoRef.current.srcObject = null;
+  };
 
-    bootFaceEngine();
-    fetchStaff(session.branch_id);
-  }, [session, permissions]);
+  // ─── CAMERA & DETECTION LOOP ──────────────────────────────────────────────
+  const drawPremiumBox = (ctx, box, color) => {
+    const { x, y, width, height } = box;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 4;
+    ctx.lineJoin = "round";
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 15;
+    ctx.beginPath();
+    ctx.rect(x, y, width, height); 
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+  };
 
-  useEffect(() => {
-    if (!modelsReady) return;
-    startCamera();
+  const handleVideoOnPlay = () => {
+    if (!modelsReady || !videoRef.current || !canvasRef.current) return;
+    if (scanIntervalRef.current) clearInterval(scanIntervalRef.current);
 
-    return () => {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((t) => t.stop());
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+
+    scanIntervalRef.current = setInterval(async () => {
+      if (processingRef.current || video.readyState < 2) return;
+      processingRef.current = true;
+
+      const displaySize = { 
+        width: video.videoWidth || video.clientWidth || 720, 
+        height: video.videoHeight || video.clientHeight || 960 
+      };
+      
+      canvas.width = displaySize.width;
+      canvas.height = displaySize.height;
+      faceapi.matchDimensions(canvas, displaySize);
+
+      try {
+        const detection = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.6 }))
+          .withFaceLandmarks().withFaceDescriptor();
+
+        const ctx = canvas.getContext("2d");
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        if (!detection) {
+          latestDescriptorRef.current = null;
+          if (selectedId) setSystemMessage({ text: "Position face in frame...", type: "idle" });
+          processingRef.current = false;
+          return;
+        }
+
+        // We have a face! Save the descriptor for instant capture
+        latestDescriptorRef.current = Array.from(detection.descriptor);
+        
+        const resized = faceapi.resizeResults(detection, displaySize);
+        
+        // Draw green box if selected, amber if just looking
+        const boxColor = selectedId ? "#10b981" : "#f59e0b";
+        drawPremiumBox(ctx, resized.detection.box, boxColor);
+
+        if (selectedId && !saving) {
+          setSystemMessage({ text: "Face locked. Ready to register.", type: "success" });
+        }
+
+      } catch (err) {
+        console.error("Detection error:", err);
+      } finally {
+        processingRef.current = false;
       }
-    };
-  }, [modelsReady]);
+    }, SCAN_INTERVAL_MS);
+  };
 
+  // ─── REGISTER API CALL ────────────────────────────────────────────────────
   const handleRegister = async () => {
-    if (!selectedUser) {
-      setErrorText("Please select an employee first.");
-      return;
-    }
-    if (!videoRef.current || !window.faceapi) {
-      setErrorText("Camera or face engine is not ready.");
+    if (!selectedUser) return;
+    if (!latestDescriptorRef.current) {
+      alert("No face detected. Please ensure the employee is looking at the camera.");
       return;
     }
 
     setSaving(true);
-    setErrorText("");
-    setStatusText("Scanning face...");
+    setSystemMessage({ text: "Encrypting and saving biometrics...", type: "loading" });
 
     try {
-      const faceapi = window.faceapi;
-
-      const detection = await faceapi
-        .detectSingleFace(videoRef.current, new faceapi.TinyFaceDetectorOptions())
-        .withFaceLandmarks()
-        .withFaceDescriptor();
-
-      const canvas = canvasRef.current;
-      if (canvas && videoRef.current) {
-        const size = {
-          width: videoRef.current.videoWidth || 960,
-          height: videoRef.current.videoHeight || 540,
-        };
-        canvas.width = size.width;
-        canvas.height = size.height;
-        faceapi.matchDimensions(canvas, size);
-        const ctx = canvas.getContext("2d");
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-        if (detection) {
-          const resized = faceapi.resizeResults(detection, size);
-          faceapi.draw.drawDetections(canvas, resized);
-          faceapi.draw.drawFaceLandmarks(canvas, resized);
-        }
-      }
-
-      if (!detection) {
-        setErrorText("No face detected. Center the face and try again.");
-        setStatusText("No face detected");
-        setSaving(false);
-        return;
-      }
-
-      const descriptor = Array.from(detection.descriptor);
-
       const res = await callApi("register_face", {
         user_id: selectedUser.id,
         branch_id: session.branch_id,
         manager_id: session.id,
-        descriptor,
-        notes,
+        descriptor: latestDescriptorRef.current
       });
 
       if (res?.status === "success") {
-        setStatusText(
-          selectedUser.face_registered
-            ? `Face re-registered for ${selectedUser.name}`
-            : `Face registered for ${selectedUser.name}`
-        );
-        setNotes("");
+        setSystemMessage({ text: `Biometrics saved for ${selectedUser.name}!`, type: "success" });
+        // Refresh roster to update the badge
         await fetchStaff(session.branch_id);
+        // Clear selection so they can move to the next person
+        setTimeout(() => setSelectedId(""), 2000);
       } else {
-        setErrorText(res?.message || "Failed to save face descriptor.");
-        setStatusText("Save failed");
+        setSystemMessage({ text: res?.message || "Failed to save face.", type: "error" });
       }
     } catch (err) {
-      setErrorText(err?.message || "Unexpected error during face registration.");
-      setStatusText("Registration failed");
+      setSystemMessage({ text: "Network error during registration.", type: "error" });
     } finally {
       setSaving(false);
     }
   };
 
-  if (loadingPage || !session) {
+  // ─── RENDER ───────────────────────────────────────────────────────────────
+  if (loading || !session) {
     return (
-      <div className="py-24 flex justify-center">
-        <Loader2 className="animate-spin text-emerald-500" size={34} />
+      <div className="min-h-[80vh] flex flex-col items-center justify-center">
+        <Loader2 className="animate-spin text-emerald-500 mb-4" size={48} strokeWidth={2} />
+        <p className="text-sm font-bold text-gray-500 uppercase tracking-widest animate-pulse">Initializing Setup...</p>
       </div>
     );
   }
 
   if (!hasPermission(permissions, "register_face", "write")) {
     return (
-      <div className="rounded-3xl border border-yellow-200 bg-yellow-50 text-yellow-800 p-6 dark:bg-yellow-900/10 dark:border-yellow-800 dark:text-yellow-300">
-        You do not currently have permission to register employee faces.
+      <div className="rounded-3xl border border-yellow-200 dark:border-yellow-900/50 bg-yellow-50 dark:bg-yellow-500/10 p-8 text-center mt-10">
+        <ShieldCheck size={48} className="text-yellow-500 mx-auto mb-4 opacity-50" />
+        <h2 className="text-xl font-black text-yellow-800 dark:text-yellow-400 mb-2">Access Denied</h2>
+        <p className="text-sm text-yellow-700 dark:text-yellow-300 font-medium">You do not have permission to register biometric data.</p>
       </div>
     );
   }
 
+  // To break out of the padding on mobile, we use negative margins
   return (
-    <div className="space-y-6 text-gray-900 dark:text-neutral-100">
-      <div className="border-b border-gray-200 dark:border-neutral-900 pb-5">
-        <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-emerald-600 dark:text-emerald-400">
-          Biometric Setup
-        </p>
-        <h1 className="text-3xl md:text-4xl font-black text-black dark:text-white">
-          Register / Re-register Faces
-        </h1>
-        <p className="text-sm text-gray-500 mt-2 max-w-3xl">
-          Select an employee, scan a clear face image, and save the biometric descriptor for attendance recognition.
-        </p>
+    <div className="-mx-4 md:mx-0 -mt-4 md:mt-0 flex flex-col md:flex-row bg-gray-50 dark:bg-[#050505] md:bg-white md:dark:bg-[#0a0a0a] min-h-[calc(100vh-64px)] md:min-h-[80vh] md:rounded-[3rem] md:border border-gray-200 dark:border-neutral-800 md:shadow-2xl overflow-hidden animate-in fade-in duration-500 relative z-0">
+      
+      {/* ── LEFT: CAMERA HERO ── */}
+      <div className="w-full md:w-1/2 lg:w-3/5 relative flex flex-col bg-black z-0 min-h-[50vh] md:min-h-full">
+        
+        {/* Video & Canvas */}
+        <video ref={videoRef} autoPlay muted playsInline onPlay={handleVideoOnPlay} className="absolute inset-0 w-full h-full object-cover z-10" />
+        <canvas ref={canvasRef} className="absolute inset-0 w-full h-full object-cover z-20" />
+
+        {/* Top Gradient & Title */}
+        <div className="absolute top-0 left-0 right-0 h-32 bg-gradient-to-b from-black/80 to-transparent z-30 p-6 pointer-events-none">
+          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-400 mb-1">Biometric Setup</p>
+          <h2 className="text-2xl font-black text-white">{selectedUser ? selectedUser.name : "Select Employee"}</h2>
+        </div>
+
+        {/* Target Overlay (Subtle guide for face) */}
+        <div className="absolute inset-0 z-20 flex items-center justify-center pointer-events-none opacity-30">
+          <div className="w-64 h-80 border-2 border-dashed border-white rounded-[3rem]"></div>
+        </div>
+
+        {/* Bottom Status Bar */}
+        <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-black/90 via-black/50 to-transparent z-30 flex flex-col justify-end">
+          <div className="bg-black/40 backdrop-blur-xl border border-white/10 rounded-2xl p-4 flex items-center gap-4">
+            {systemMessage.type === "loading" ? <Loader2 className="animate-spin text-emerald-400 shrink-0" size={24} /> :
+             systemMessage.type === "error" ? <AlertCircle className="text-red-400 shrink-0" size={24} /> :
+             systemMessage.type === "success" ? <CheckCircle2 className="text-emerald-400 shrink-0" size={24} /> :
+             <ScanFace className="text-blue-400 shrink-0" size={24} />}
+            <p className="font-bold text-sm leading-tight text-white">{systemMessage.text}</p>
+          </div>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-[420px,1fr] gap-6">
-        <section className="rounded-3xl border border-gray-200 dark:border-neutral-900 bg-white dark:bg-black shadow-sm overflow-hidden">
-          <div className="p-5 border-b border-gray-100 dark:border-neutral-900">
-            <div className="flex items-center gap-2 mb-3">
-              <UserCircle2 size={16} className="text-emerald-500" />
-              <h2 className="text-sm font-black">Branch Staff</h2>
-            </div>
-
-            <div className="relative">
-              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-              <input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search employee..."
-                className="w-full rounded-2xl border border-gray-200 dark:border-neutral-800 bg-gray-50 dark:bg-neutral-950 px-10 py-3 text-sm outline-none"
-              />
-            </div>
+      {/* ── RIGHT: STAFF ROSTER ── */}
+      <div className="w-full md:w-1/2 lg:w-2/5 flex flex-col bg-white dark:bg-[#0a0a0a] z-10 h-auto md:h-full flex-1">
+        
+        <div className="p-5 md:p-6 border-b border-gray-100 dark:border-neutral-900 shrink-0">
+          <div className="flex items-center gap-2 mb-4">
+            <Users size={18} className="text-emerald-500" />
+            <h2 className="text-lg font-black text-gray-900 dark:text-white">Active Roster</h2>
           </div>
+          
+          <div className="relative">
+            <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search personnel..."
+              className="w-full bg-gray-50 dark:bg-[#111] border border-gray-200 dark:border-neutral-800 rounded-2xl pl-12 pr-4 py-3.5 text-sm font-bold text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500 transition-all"
+            />
+          </div>
+        </div>
 
-          <div className="max-h-[70vh] overflow-y-auto p-3 space-y-3">
-            {loadingRoster ? (
-              <div className="p-6 text-sm text-gray-500">Loading staff...</div>
-            ) : filteredStaff.length === 0 ? (
-              <div className="p-6 text-sm text-gray-500">No staff found.</div>
-            ) : (
-              filteredStaff.map((user) => {
-                const selected = String(user.id) === String(selectedId);
-                return (
-                  <button
-                    key={user.id}
-                    onClick={() => setSelectedId(String(user.id))}
-                    className={`w-full text-left rounded-2xl border p-4 transition-all ${
-                      selected
-                        ? "border-emerald-400 bg-emerald-50 dark:bg-emerald-900/10 dark:border-emerald-700"
-                        : "border-gray-200 dark:border-neutral-900 bg-white dark:bg-black hover:bg-gray-50 dark:hover:bg-neutral-950"
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-black text-black dark:text-white">{user.name}</p>
-                        <p className="text-[11px] text-gray-500 mt-1">
-                          {user.role} • {user.department || "No department"}
-                        </p>
-                        <p className="text-[11px] text-gray-400 mt-1">{user.mobile_number}</p>
-                      </div>
-
-                      {user.face_registered ? (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide">
-                          <CheckCircle2 size={12} />
-                          Registered
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/20 dark:text-amber-300 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide">
-                          <AlertTriangle size={12} />
-                          Pending
-                        </span>
-                      )}
+        <div className="flex-1 overflow-y-auto custom-scrollbar p-3 md:p-4 space-y-2 pb-32 md:pb-4">
+          {filteredStaff.length === 0 ? (
+            <div className="text-center p-8 text-gray-400 font-bold text-sm">No employees found.</div>
+          ) : (
+            filteredStaff.map((user) => {
+              const isSelected = String(user.id) === String(selectedId);
+              return (
+                <button
+                  key={user.id}
+                  onClick={() => setSelectedId(String(user.id))}
+                  className={`w-full text-left p-4 rounded-2xl border transition-all duration-200 ${
+                    isSelected 
+                      ? "bg-emerald-50 dark:bg-emerald-500/10 border-emerald-300 dark:border-emerald-800 shadow-sm" 
+                      : "bg-white dark:bg-[#0a0a0a] border-gray-100 dark:border-neutral-900 hover:border-emerald-200 dark:hover:border-emerald-900/50"
+                  }`}
+                >
+                  <div className="flex justify-between items-start">
+                    <div className="pr-3">
+                      <p className={`font-black text-base leading-tight mb-1 ${isSelected ? 'text-emerald-900 dark:text-emerald-400' : 'text-gray-900 dark:text-white'}`}>
+                        {user.name}
+                      </p>
+                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{user.role}</p>
                     </div>
-                  </button>
-                );
-              })
+                    {user.face_registered ? (
+                      <span className="shrink-0 flex items-center gap-1 bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-400 px-2 py-1 rounded-md text-[9px] font-black uppercase tracking-wider">
+                        <CheckCircle2 size={10} strokeWidth={3} /> Registered
+                      </span>
+                    ) : (
+                      <span className="shrink-0 flex items-center gap-1 bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400 px-2 py-1 rounded-md text-[9px] font-black uppercase tracking-wider">
+                        <AlertTriangle size={10} strokeWidth={3} /> Pending
+                      </span>
+                    )}
+                  </div>
+                </button>
+              );
+            })
+          )}
+        </div>
+
+        {/* ── STICKY BOTTOM REGISTRATION BUTTON ── */}
+        <div className="sticky bottom-0 left-0 right-0 p-4 md:p-6 bg-white/90 dark:bg-[#0a0a0a]/90 backdrop-blur-xl border-t border-gray-100 dark:border-neutral-900 pb-safe md:pb-6 z-20">
+          <button
+            onClick={handleRegister}
+            disabled={!selectedUser || !modelsReady || !cameraReady || saving}
+            className="w-full flex items-center justify-center gap-2 py-4 bg-emerald-500 hover:bg-emerald-600 text-white font-black rounded-2xl shadow-lg shadow-emerald-500/20 transition-all active:scale-[0.98] disabled:opacity-50 disabled:active:scale-100"
+          >
+            {saving ? (
+              <Loader2 size={20} className="animate-spin" />
+            ) : (
+              <ScanFace size={20} strokeWidth={2.5} />
             )}
-          </div>
-        </section>
+            {saving ? "Encrypting Biometrics..." : selectedUser ? `Register Face for ${selectedUser.name}` : "Select Employee First"}
+          </button>
+        </div>
 
-        <section className="rounded-3xl border border-gray-200 dark:border-neutral-900 bg-white dark:bg-black shadow-sm overflow-hidden">
-          <div className="p-5 border-b border-gray-100 dark:border-neutral-900 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-            <div>
-              <p className="text-sm font-black">
-                {selectedUser ? selectedUser.name : "Select an employee"}
-              </p>
-              <p className="text-[11px] text-gray-500 mt-1">
-                {selectedUser
-                  ? `${selectedUser.role} • ${selectedUser.department || "No department"}`
-                  : "Choose a staff member from the left panel"}
-              </p>
-            </div>
-
-            <div className="flex items-center gap-2 text-xs font-bold">
-              <span className="px-3 py-2 rounded-xl bg-gray-100 dark:bg-neutral-900">
-                Models: {modelsReady ? "Ready" : "Loading"}
-              </span>
-              <span className="px-3 py-2 rounded-xl bg-gray-100 dark:bg-neutral-900">
-                Camera: {cameraReady ? "Ready" : "Waiting"}
-              </span>
-            </div>
-          </div>
-
-          <div className="p-5 space-y-5">
-            <div className="relative rounded-3xl overflow-hidden border border-gray-200 dark:border-neutral-900 bg-neutral-950">
-              <video
-                ref={videoRef}
-                autoPlay
-                muted
-                playsInline
-                className="w-full aspect-video object-cover"
-              />
-              <canvas
-                ref={canvasRef}
-                className="absolute inset-0 w-full h-full pointer-events-none"
-              />
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-[1fr,auto,auto] gap-3">
-              <textarea
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                rows={3}
-                placeholder="Optional notes for re-registration..."
-                className="w-full rounded-2xl border border-gray-200 dark:border-neutral-800 bg-gray-50 dark:bg-neutral-950 px-4 py-3 text-sm outline-none"
-              />
-
-              <button
-                onClick={startCamera}
-                className="rounded-2xl px-4 py-3 text-sm font-black border border-gray-200 dark:border-neutral-800 hover:bg-gray-50 dark:hover:bg-neutral-900 flex items-center justify-center gap-2"
-              >
-                <RefreshCw size={16} />
-                Restart Camera
-              </button>
-
-              <button
-                onClick={handleRegister}
-                disabled={!selectedUser || !modelsReady || !cameraReady || saving}
-                className="rounded-2xl px-5 py-3 text-sm font-black bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed text-white flex items-center justify-center gap-2"
-              >
-                {saving ? <Loader2 size={16} className="animate-spin" /> : <ScanFace size={16} />}
-                {selectedUser?.face_registered ? "Re-register Face" : "Register Face"}
-              </button>
-            </div>
-
-            <div className="rounded-2xl border border-gray-200 dark:border-neutral-900 bg-gray-50 dark:bg-neutral-950 p-4">
-              <div className="flex items-center gap-2 mb-2">
-                <Camera size={16} className="text-emerald-500" />
-                <p className="text-sm font-black">Scanner Status</p>
-              </div>
-              <p className="text-sm text-gray-600 dark:text-neutral-400">{statusText}</p>
-              {errorText ? (
-                <p className="mt-2 text-sm font-bold text-red-500">{errorText}</p>
-              ) : null}
-            </div>
-          </div>
-        </section>
       </div>
     </div>
   );
