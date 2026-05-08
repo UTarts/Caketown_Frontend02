@@ -3,25 +3,17 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { callApi } from "@/lib/apiClient";
 import {
-  Building2, Users, Banknote, Activity, Clock, ArrowRight, RefreshCw, 
-  UserCheck, MapPin, Sparkles, Plus, Wallet, Shield, Calendar, Search,
-  Filter, UserPlus, ChevronDown, CheckCircle2, AlertTriangle, FileText,
-  ChevronLeft, ChevronRight, X, Loader2, History
+  Building2, Users, Banknote, Clock, RefreshCw, UserCheck, MapPin, 
+  Wallet, Shield, FileText, X, History, ChevronLeft, ChevronRight, Activity, 
+  Coffee, LogIn, LogOut, Loader2
 } from "lucide-react";
-import Link from "next/link";
 
-// ─── LOGGING METADATA ──────────────────────────────────────────────────────
+// ─── LOGGING METADATA ────────────
 const LOG_MAP = {
-  login:            { color: "text-blue-500",    bg: "bg-blue-500/10",    dot: "bg-blue-500",    label: "Auth" },
-  AUTH_LOGIN:       { color: "text-blue-500",    bg: "bg-blue-500/10",    dot: "bg-blue-500",    label: "Auth" },
   create_user:      { color: "text-emerald-500", bg: "bg-emerald-500/10", dot: "bg-emerald-500", label: "Admin" },
   USER_CREATED:     { color: "text-emerald-500", bg: "bg-emerald-500/10", dot: "bg-emerald-500", label: "Admin" },
   delete_user:      { color: "text-red-500",     bg: "bg-red-500/10",     dot: "bg-red-500",     label: "Admin" },
   USER_DELETED:     { color: "text-red-500",     bg: "bg-red-500/10",     dot: "bg-red-500",     label: "Admin" },
-  attendance_punch: { color: "text-purple-500",  bg: "bg-purple-500/10",  dot: "bg-purple-500",  label: "Punch" },
-  PUNCH_LOGGED:     { color: "text-purple-500",  bg: "bg-purple-500/10",  dot: "bg-purple-500",  label: "Punch" },
-  ATTENDANCE_IN:    { color: "text-purple-500",  bg: "bg-purple-500/10",  dot: "bg-purple-500",  label: "Punch In" },
-  ATTENDANCE_OUT:   { color: "text-purple-500",  bg: "bg-purple-500/10",  dot: "bg-purple-500",  label: "Punch Out" },
   SALARY_PAID:      { color: "text-emerald-500", bg: "bg-emerald-500/10", dot: "bg-emerald-500", label: "Payroll" },
   advance_log:      { color: "text-orange-500",  bg: "bg-orange-500/10",  dot: "bg-orange-500",  label: "Finance" },
   ADVANCE_LOGGED:   { color: "text-orange-500",  bg: "bg-orange-500/10",  dot: "bg-orange-500",  label: "Finance" },
@@ -51,6 +43,18 @@ function groupLogsByDate(logs) {
   return grouped;
 }
 
+function formatDuration(minutes) {
+  if (!minutes || minutes <= 0) return "0h 0m";
+  const h = Math.floor(minutes / 60);
+  const m = Math.floor(minutes % 60);
+  return `${h > 0 ? `${h}h ` : ''}${m}m`;
+}
+
+function isStrictlyToday(isoString) {
+  if (!isoString) return false;
+  return new Date(isoString).toLocaleDateString("en-IN") === new Date().toLocaleDateString("en-IN");
+}
+
 // ─── CUSTOM SVG PROGRESS RING ──────────────────────────────────────────────
 const CircularProgress = ({ value, max, colorClass, size = 64, strokeWidth = 6 }) => {
   const radius = (size - strokeWidth) / 2;
@@ -75,44 +79,57 @@ const CircularProgress = ({ value, max, colorClass, size = 64, strokeWidth = 6 }
 // ─── MAIN DASHBOARD ────────────────────────────────────────────────────────
 export default function AdminDashboard() {
   const [stats, setStats] = useState(null);
+  const [liveData, setLiveData] = useState({}); 
   const [loading, setLoading] = useState(true);
   const [now, setNow] = useState(new Date());
 
-  // Smart Feed State
   const [logs, setLogs] = useState([]);
   const [logsLoading, setLogsLoading] = useState(false);
-  const [filterType, setFilterType] = useState("all");
-  const [filterBranch, setFilterBranch] = useState("all");
   const [filterDate, setFilterDate] = useState("");
 
-  // Tick clock
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 60000);
     return () => clearInterval(t);
   }, []);
 
-  const fetchDashboard = useCallback(async () => {
+  const fetchDashboardAndLive = useCallback(async () => {
     setLoading(true);
     const res = await callApi("get_admin_dashboard");
     if (res.status === "success") {
       setStats(res.data);
+      
+      const todayIso = new Date().toISOString().split('T')[0];
+      const liveDataMap = {};
+      
+      if (res.data.branch_grid && res.data.branch_grid.length > 0) {
+        await Promise.all(res.data.branch_grid.map(async (branch) => {
+          const liveRes = await callApi("get_live_attendance", { branch_id: branch.id, date: todayIso });
+          if (liveRes.status === "success") {
+            liveDataMap[branch.id] = liveRes.data.all_people || [];
+          }
+        }));
+      }
+      setLiveData(liveDataMap);
     }
     setLoading(false);
   }, []);
 
   const fetchFeed = useCallback(async () => {
     setLogsLoading(true);
-    const res = await callApi("get_system_logs", { per_page: 300, branch_id: filterBranch === "all" ? "" : filterBranch });
+    const res = await callApi("get_system_logs", { per_page: 300 });
     if (res.status === "success") {
-      setLogs(res.data || []);
+      const highLevelLogs = (res.data || []).filter(log => {
+        const type = log.action_type.toUpperCase();
+        return !type.includes("PUNCH") && !type.includes("ATTENDANCE") && !type.includes("LOGIN");
+      });
+      setLogs(highLevelLogs);
     }
     setLogsLoading(false);
-  }, [filterBranch]);
+  }, []);
 
-  useEffect(() => { fetchDashboard(); }, [fetchDashboard]);
+  useEffect(() => { fetchDashboardAndLive(); }, [fetchDashboardAndLive]);
   useEffect(() => { fetchFeed(); }, [fetchFeed]);
 
-  // Smart Date Navigation Handlers
   const handlePrevDay = () => {
     const d = filterDate ? new Date(filterDate) : new Date();
     d.setDate(d.getDate() - 1);
@@ -128,7 +145,6 @@ export default function AdminDashboard() {
 
   const clearDate = () => setFilterDate("");
 
-  // Smart Aggregation (Failsafe for Missing Root Variables)
   const totalEmployees = useMemo(() => {
     if (stats?.total_employees > 0) return stats.total_employees;
     return stats?.branch_grid?.reduce((acc, b) => acc + (Number(b.staff_count) || 0), 0) || 0;
@@ -141,19 +157,11 @@ export default function AdminDashboard() {
 
   const salaryVal = useMemo(() => {
     if (stats?.salary_expenditure > 0) return Number(stats.salary_expenditure);
-    // If exact salary isn't provided, we can estimate it based on fixed salaries or just return 0 if unavailable
     return stats?.branch_grid?.reduce((acc, b) => acc + (Number(b.est_salary) || 0), 0) || 0;
   }, [stats]);
 
-  // Smart Filtering & Branch ID Scrubbing
   const groupedFilteredLogs = useMemo(() => {
     const filtered = logs.filter(log => {
-      if (filterType === "attendance") {
-        if (!log.action_type.includes("ATTENDANCE") && !log.action_type.includes("PUNCH")) return false;
-      }
-      if (filterType === "finance") {
-        if (!log.action_type.includes("ADVANCE") && !log.action_type.includes("SALARY") && !log.action_type.includes("BILL") && !log.action_type.includes("PAYROLL")) return false;
-      }
       if (filterDate) {
         const logDate = new Date(log.created_at).toISOString().split('T')[0];
         if (logDate !== filterDate) return false;
@@ -161,12 +169,10 @@ export default function AdminDashboard() {
       return true;
     });
 
-    // Scrub branch IDs and replace with Branch Names
     const scrubbedLogs = filtered.map(log => {
       let cleanDesc = log.description;
       if (stats?.branch_grid) {
         stats.branch_grid.forEach(b => {
-          // Replace "branch ID X" or "branch X" with actual name
           cleanDesc = cleanDesc.replace(new RegExp(`branch ID ${b.id}\\b`, 'gi'), b.branch_name);
           cleanDesc = cleanDesc.replace(new RegExp(`branch ${b.id}\\b`, 'gi'), b.branch_name);
         });
@@ -175,7 +181,7 @@ export default function AdminDashboard() {
     });
 
     return groupLogsByDate(scrubbedLogs);
-  }, [logs, filterType, filterDate, stats]);
+  }, [logs, filterDate, stats]);
 
   const thisMonth = now.toLocaleDateString("en-IN", { month: "long", year: "numeric" });
 
@@ -196,7 +202,7 @@ export default function AdminDashboard() {
             <span className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-600 dark:text-emerald-500">Global System Online</span>
           </div>
           <h1 className="text-3xl md:text-5xl font-black text-gray-900 dark:text-white tracking-tight leading-tight">
-            Admin Dashboard.
+            System Overview.
           </h1>
           <p className="text-sm text-gray-500 dark:text-neutral-400 mt-2 font-bold flex items-center gap-2">
             <Clock size={15} className="text-emerald-500" />
@@ -204,30 +210,10 @@ export default function AdminDashboard() {
           </p>
         </div>
 
-        <button onClick={() => { fetchDashboard(); fetchFeed(); }} disabled={loading || logsLoading} className="relative z-10 flex items-center justify-center gap-2 px-6 py-3.5 rounded-2xl bg-gray-900 dark:bg-white text-white dark:text-black font-black text-sm hover:bg-gray-800 dark:hover:bg-gray-200 transition-all shadow-xl shadow-gray-900/20 dark:shadow-white/10 active:scale-95 disabled:opacity-50 w-full md:w-auto">
+        <button onClick={() => { fetchDashboardAndLive(); fetchFeed(); }} disabled={loading || logsLoading} className="relative z-10 flex items-center justify-center gap-2 px-6 py-3.5 rounded-2xl bg-gray-900 dark:bg-white text-white dark:text-black font-black text-sm hover:bg-gray-800 dark:hover:bg-gray-200 transition-all shadow-xl shadow-gray-900/20 dark:shadow-white/10 active:scale-95 disabled:opacity-50 w-full md:w-auto">
           <RefreshCw size={16} strokeWidth={3} className={loading || logsLoading ? "animate-spin" : ""} />
           {loading || logsLoading ? "Synchronizing..." : "Sync Network"}
         </button>
-      </div>
-
-      {/* ── SHORTCUT COMMAND CENTER ───────────────────────────────────── */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
-        <Link href="/admin/employees" className="group flex flex-col items-center justify-center gap-3 bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-3xl p-5 hover:border-blue-500 hover:shadow-lg hover:shadow-blue-500/10 transition-all active:scale-95">
-          <div className="w-12 h-12 rounded-2xl bg-blue-50 dark:bg-blue-500/10 text-blue-500 flex items-center justify-center group-hover:scale-110 transition-transform"><UserPlus size={20} strokeWidth={2.5} /></div>
-          <span className="text-xs font-black uppercase tracking-widest text-gray-600 dark:text-neutral-400 group-hover:text-blue-500">Hire Staff</span>
-        </Link>
-        <Link href="/admin/payroll" className="group flex flex-col items-center justify-center gap-3 bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-3xl p-5 hover:border-emerald-500 hover:shadow-lg hover:shadow-emerald-500/10 transition-all active:scale-95">
-          <div className="w-12 h-12 rounded-2xl bg-emerald-50 dark:bg-emerald-500/10 text-emerald-500 flex items-center justify-center group-hover:scale-110 transition-transform"><Banknote size={20} strokeWidth={2.5} /></div>
-          <span className="text-xs font-black uppercase tracking-widest text-gray-600 dark:text-neutral-400 group-hover:text-emerald-500">Run Payroll</span>
-        </Link>
-        <Link href="/admin/branches" className="group flex flex-col items-center justify-center gap-3 bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-3xl p-5 hover:border-purple-500 hover:shadow-lg hover:shadow-purple-500/10 transition-all active:scale-95">
-          <div className="w-12 h-12 rounded-2xl bg-purple-50 dark:bg-purple-500/10 text-purple-500 flex items-center justify-center group-hover:scale-110 transition-transform"><Building2 size={20} strokeWidth={2.5} /></div>
-          <span className="text-xs font-black uppercase tracking-widest text-gray-600 dark:text-neutral-400 group-hover:text-purple-500">Branches</span>
-        </Link>
-        <Link href="/admin/settings" className="group flex flex-col items-center justify-center gap-3 bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-3xl p-5 hover:border-orange-500 hover:shadow-lg hover:shadow-orange-500/10 transition-all active:scale-95">
-          <div className="w-12 h-12 rounded-2xl bg-orange-50 dark:bg-orange-500/10 text-orange-500 flex items-center justify-center group-hover:scale-110 transition-transform"><Shield size={20} strokeWidth={2.5} /></div>
-          <span className="text-xs font-black uppercase tracking-widest text-gray-600 dark:text-neutral-400 group-hover:text-orange-500">Logic Config</span>
-        </Link>
       </div>
 
       {/* ── GLOBAL TELEMETRY (GRADIENT STAT CARDS) ────────────────────── */}
@@ -246,15 +232,14 @@ export default function AdminDashboard() {
 
         <div className="relative overflow-hidden bg-gradient-to-br from-emerald-400 to-teal-600 rounded-3xl p-6 shadow-lg shadow-emerald-500/20 flex flex-col justify-between text-white group">
           <div className="absolute -right-6 -top-6 opacity-20 transform group-hover:scale-110 transition-transform duration-500"><UserCheck size={140} /></div>
-          <div className="relative z-10 flex justify-between items-end h-full">
+          <div className="relative z-10 flex flex-col h-full justify-between">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-[10px] font-black uppercase tracking-widest text-emerald-100">Live Attendance</p>
+            </div>
             <div>
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-[10px] font-black uppercase tracking-widest text-emerald-100">Live Attendance</p>
-              </div>
               <p className="text-4xl md:text-5xl font-black tabular-nums tracking-tight">{loading ? "—" : presentToday}</p>
               <p className="text-xs font-bold text-emerald-100 mt-2 opacity-90">Present on floor today</p>
             </div>
-            {!loading && <CircularProgress value={presentToday} max={totalEmployees || 1} colorClass="text-white" size={60} strokeWidth={5} />}
           </div>
         </div>
 
@@ -271,155 +256,196 @@ export default function AdminDashboard() {
 
       </div>
 
-      {/* ── BRANCH SURVEILLANCE GRID (DOMINANT VIEW) ───────────────────── */}
-      <div className="space-y-4">
-        <div className="flex items-center justify-between px-1">
-          <h2 className="text-sm font-black text-gray-900 dark:text-white uppercase tracking-widest flex items-center gap-2">
-            <Building2 size={16} className="text-blue-500" /> Branch Telemetry
-          </h2>
-          <Link href="/admin/branches" className="text-xs font-bold text-emerald-600 dark:text-emerald-500 hover:underline">
-            Manage Branches →
-          </Link>
-        </div>
-
-        {loading ? (
-           <div className="flex justify-center py-20"><Loader2 className="animate-spin text-blue-500" size={32} /></div>
-        ) : stats?.branch_grid?.length === 0 ? (
-           <div className="bg-white dark:bg-[#0a0a0a] border border-dashed border-gray-200 dark:border-neutral-800 rounded-3xl p-10 text-center text-gray-400 font-bold text-sm">No branches configured.</div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-5">
-            {stats?.branch_grid?.map(branch => {
-              const total = parseInt(branch.staff_count) || 0;
-              const present = parseInt(branch.present_today) || 0;
-              return (
-                <Link
-                  key={branch.id}
-                  href={`/admin/branch?id=${branch.id}`}
-                  className="relative group bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-[2rem] p-6 hover:border-emerald-300 dark:hover:border-emerald-900/50 hover:shadow-xl hover:shadow-emerald-500/5 transition-all overflow-hidden flex flex-col justify-between"
-                >
-                  <div className="flex items-start justify-between mb-6">
-                    <div className="min-w-0 pr-4">
-                      <div className="flex items-center gap-2 mb-1.5">
-                        <span className="px-2 py-0.5 rounded-md text-[9px] font-black bg-gray-100 dark:bg-neutral-900 text-gray-500 uppercase tracking-widest">{branch.branch_code || "Active"}</span>
-                      </div>
-                      <h3 className="font-black text-xl md:text-2xl text-gray-900 dark:text-white truncate group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">{branch.branch_name}</h3>
-                      <p className="text-xs font-medium text-gray-500 dark:text-neutral-400 mt-1 flex items-center gap-1.5 truncate"><MapPin size={12}/> {branch.address || "Location unassigned"}</p>
-                    </div>
-                    <CircularProgress value={present} max={total} colorClass="text-emerald-500" size={54} strokeWidth={5} />
-                  </div>
-                  
-                  <div className="flex items-center gap-6 pt-4 border-t border-gray-100 dark:border-neutral-900">
-                    <div>
-                      <p className="text-xl font-black text-gray-900 dark:text-white tabular-nums leading-none">{total}</p>
-                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">Total Staff</p>
-                    </div>
-                    <div className="w-px h-8 bg-gray-100 dark:bg-neutral-900"></div>
-                    <div>
-                      <p className="text-xl font-black text-emerald-600 dark:text-emerald-400 tabular-nums leading-none">{present}</p>
-                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">Present Today</p>
-                    </div>
-                  </div>
-                </Link>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      {/* ── SMART SYSTEM FEED (LOCKED HEIGHT) ────────────────────────── */}
-      <div className="space-y-4">
-        <div className="flex items-center justify-between px-1">
-          <h2 className="text-sm font-black text-gray-900 dark:text-white uppercase tracking-widest flex items-center gap-2">
-            <History size={16} className="text-purple-500" /> System Audit Timeline
-          </h2>
-        </div>
-
-        {/* Locked h-[600px] frame prevents page stretching */}
-        <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-3xl shadow-sm flex flex-col h-[600px] overflow-hidden">
-          
-          {/* Smart Filter Header */}
-          <div className="p-3 md:p-4 border-b border-gray-100 dark:border-neutral-900 bg-gray-50/50 dark:bg-neutral-900/20 flex flex-wrap items-center gap-2 md:gap-3 shrink-0">
-            <select value={filterType} onChange={e => setFilterType(e.target.value)} className="bg-white dark:bg-[#111] border border-gray-200 dark:border-neutral-800 text-[10px] md:text-xs font-black uppercase tracking-widest text-gray-600 dark:text-neutral-400 rounded-xl px-3 py-2.5 outline-none cursor-pointer">
-              <option value="all">All Events</option>
-              <option value="attendance">Attendance</option>
-              <option value="finance">Finance</option>
-            </select>
-            
-            <select value={filterBranch} onChange={e => setFilterBranch(e.target.value)} className="bg-white dark:bg-[#111] border border-gray-200 dark:border-neutral-800 text-[10px] md:text-xs font-black uppercase tracking-widest text-gray-600 dark:text-neutral-400 rounded-xl px-3 py-2.5 outline-none truncate cursor-pointer max-w-[140px] md:max-w-none">
-              <option value="all">All Branches</option>
-              {stats?.branch_grid?.map(b => <option key={b.id} value={b.id}>{b.branch_name}</option>)}
-            </select>
-
-            {/* Smart Date Nav */}
-            <div className="flex items-center gap-1 bg-white dark:bg-[#111] border border-gray-200 dark:border-neutral-800 rounded-xl p-1 shrink-0 ml-auto md:ml-0">
-              <button onClick={handlePrevDay} className="p-1.5 hover:bg-gray-100 dark:hover:bg-neutral-800 rounded-lg transition-colors text-gray-500"><ChevronLeft size={16}/></button>
-              
-              <div className="relative">
-                <input 
-                  type="date" 
-                  value={filterDate} 
-                  onChange={e => setFilterDate(e.target.value)} 
-                  className="bg-transparent text-[10px] md:text-xs font-black text-gray-700 dark:text-neutral-300 outline-none cursor-pointer w-24 text-center leading-none"
-                />
-              </div>
-
-              <button onClick={handleNextDay} disabled={!filterDate} className="p-1.5 hover:bg-gray-100 dark:hover:bg-neutral-800 rounded-lg transition-colors text-gray-500 disabled:opacity-30"><ChevronRight size={16}/></button>
-              {filterDate && <button onClick={clearDate} className="p-1.5 hover:bg-red-100 dark:hover:bg-red-900/30 text-red-500 rounded-lg transition-colors ml-1"><X size={14}/></button>}
-            </div>
+      <div className="grid grid-cols-1 xl:grid-cols-[1.2fr_0.8fr] gap-6 md:gap-8">
+        
+        {/* ── BRANCH SURVEILLANCE DATA WIDGETS ─────────────────────────────────── */}
+        <div className="space-y-5">
+          <div className="flex items-center justify-between px-1">
+            <h2 className="text-sm font-black text-gray-900 dark:text-white uppercase tracking-widest flex items-center gap-2">
+              <Building2 size={16} className="text-blue-500" /> Operational Branches
+            </h2>
           </div>
 
-          {/* Scrolling Feed Content */}
-          <div className="flex-1 overflow-y-auto custom-scrollbar p-5 md:p-8">
-            {logsLoading ? (
-              <div className="flex justify-center py-20"><Loader2 className="animate-spin text-purple-500" size={28} /></div>
-            ) : Object.keys(groupedFilteredLogs).length === 0 ? (
-              <div className="flex flex-col items-center justify-center text-center py-24 opacity-50">
-                <FileText size={40} className="mb-4 text-gray-400" />
-                <p className="text-base font-black text-gray-900 dark:text-white">No logs found</p>
-                <p className="text-sm font-bold text-gray-500 mt-1">No system activity matches your current filters.</p>
-                <button onClick={() => {setFilterType('all'); setFilterBranch('all'); setFilterDate('');}} className="px-4 py-2 bg-gray-100 dark:bg-neutral-800 rounded-lg text-xs font-black text-gray-600 dark:text-neutral-300 mt-4 hover:bg-gray-200 transition-colors">Clear Filters</button>
-              </div>
-            ) : (
-              <div className="space-y-8">
-                {Object.entries(groupedFilteredLogs).map(([dateLabel, logs]) => (
-                  <div key={dateLabel}>
-                    <div className="flex items-center gap-4 mb-5 sticky top-0 bg-white/90 dark:bg-[#0a0a0a]/90 backdrop-blur-sm rounded-lg z-10 py-1 -mt-1">
-                      <span className="text-[10px] font-black uppercase tracking-widest text-gray-500 bg-gray-100 dark:bg-neutral-900 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-neutral-800">{dateLabel}</span>
-                      <div className="h-px bg-gray-100 dark:bg-neutral-800 flex-1"></div>
-                    </div>
+          {loading ? (
+             <div className="flex justify-center py-20"><Loader2 className="animate-spin text-blue-500" size={32} /></div>
+          ) : stats?.branch_grid?.length === 0 ? (
+             <div className="bg-white dark:bg-[#0a0a0a] border border-dashed border-gray-200 dark:border-neutral-800 rounded-3xl p-10 text-center text-gray-400 font-bold text-sm">No branches configured.</div>
+          ) : (
+            <div className="space-y-6">
+              {stats?.branch_grid?.map(branch => {
+                const total = parseInt(branch.staff_count) || 0;
+                const present = parseInt(branch.present_today) || 0;
+                const activePeople = liveData[branch.id]?.filter(p => p.status === 'working' || p.status === 'on_break') || [];
+                
+                return (
+                  <div key={branch.id} className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-[2rem] shadow-sm overflow-hidden flex flex-col">
                     
-                    <div className="relative pl-4 md:pl-6 border-l-2 border-gray-100 dark:border-neutral-800/80 space-y-6">
-                      {logs.map((log) => {
-                        const style = LOG_MAP[log.action_type] || LOG_MAP.default;
-                        return (
-                          <div key={log.id} className="relative group">
-                            {/* Explicit Dot Color */}
-                            <div className={`absolute -left-[21px] md:-left-[29px] top-1 w-3.5 h-3.5 rounded-full ring-4 ring-white dark:ring-[#0a0a0a] ${style.dot} shadow-sm`} />
-                            
-                            <div className="pl-2 md:pl-3">
-                              <p className="text-sm font-bold text-gray-900 dark:text-neutral-100 leading-snug mb-2">{log.description}</p>
-                              <div className="flex flex-wrap items-center gap-2">
-                                <span className={`px-2.5 py-1 rounded-md text-[9px] font-black uppercase tracking-widest ${style.bg} ${style.color}`}>
-                                  {style.label}
-                                </span>
-                                <span className="text-[10px] font-bold text-gray-400 tabular-nums">
-                                  {new Date(log.created_at).toLocaleTimeString("en-IN", { hour: '2-digit', minute: '2-digit', hour12: true })}
-                                </span>
-                                {log.actor_name && (
-                                  <span className="text-[10px] font-bold text-gray-500 flex items-center gap-1.5 border-l border-gray-200 dark:border-neutral-800 pl-2">
-                                    By <span className="text-gray-700 dark:text-neutral-300">{log.actor_name}</span>
+                    <div className="p-6 md:p-8 flex items-start justify-between border-b border-gray-100 dark:border-neutral-900 bg-gray-50/30 dark:bg-[#111]/30">
+                      <div className="min-w-0 pr-4">
+                        <div className="flex items-center gap-2 mb-1.5">
+                          <span className="px-2 py-0.5 rounded-md text-[9px] font-black bg-gray-200 dark:bg-neutral-800 text-gray-600 dark:text-neutral-400 uppercase tracking-widest">{branch.branch_code || "Active"}</span>
+                        </div>
+                        <h3 className="font-black text-2xl text-gray-900 dark:text-white truncate">{branch.branch_name}</h3>
+                        <p className="text-xs font-medium text-gray-500 dark:text-neutral-400 mt-1 flex items-center gap-1.5 truncate"><MapPin size={12}/> {branch.address || "Location unassigned"}</p>
+                      </div>
+                      
+                      <div className="flex items-center gap-6 shrink-0">
+                         <div className="text-right hidden sm:block">
+                           <p className="text-xl font-black text-gray-900 dark:text-white tabular-nums leading-none">{total}</p>
+                           <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1.5">Total Staff</p>
+                         </div>
+                         <div className="text-right hidden sm:block">
+                           <p className="text-xl font-black text-emerald-600 dark:text-emerald-400 tabular-nums leading-none">{present}</p>
+                           <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1.5">Present</p>
+                         </div>
+                      </div>
+                    </div>
+
+                    <div className="w-full overflow-x-auto custom-scrollbar">
+                      {activePeople.length === 0 ? (
+                        <div className="p-10 flex flex-col items-center justify-center text-center opacity-50">
+                           <Users size={32} className="text-gray-400 mb-3" />
+                           <p className="text-sm font-bold text-gray-500">No personnel currently on the floor.</p>
+                        </div>
+                      ) : (
+                        <table className="w-full text-left min-w-[600px]">
+                          <thead>
+                            <tr className="bg-gray-50/50 dark:bg-[#050505] border-b border-gray-100 dark:border-neutral-900 text-[9px] font-black text-gray-400 uppercase tracking-widest">
+                              <th className="p-4">Personnel</th>
+                              <th className="p-4 text-center">First In</th>
+                              <th className="p-4 text-center">Last Out</th>
+                              <th className="p-4 text-right">Work Time</th>
+                              <th className="p-4 text-right">Break Time</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-100 dark:divide-neutral-900">
+                            {activePeople.map(person => {
+                              const formatTime = (iso) => iso ? new Date(iso).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) : "—";
+                              
+                              // STRICT FRONTEND PLUCKING: Guarantees accurate first punch from raw array
+                              const todaysPunches = person.punches ? person.punches.filter(p => isStrictlyToday(p)) : [];
+                              const strictFirstPunch = todaysPunches.length > 0 ? todaysPunches[0] : null;
+                              const strictLastPunch = todaysPunches.length > 0 ? todaysPunches[todaysPunches.length - 1] : null;
+                              
+                              let breakMins = 0;
+                              let workMins = 0;
+
+                              if (todaysPunches.length > 0) {
+                                const renderPunches = [...todaysPunches].map(p => new Date(p).getTime());
+                                if (person.status === 'working') renderPunches.push(now.getTime());
+                                
+                                for (let i = 0; i < renderPunches.length - 1; i++) {
+                                  const duration = Math.floor((renderPunches[i+1] - renderPunches[i]) / 60000);
+                                  if (i % 2 === 0) workMins += duration;
+                                  else breakMins += duration;
+                                }
+                              }
+
+                              const isWorking = person.status === 'working';
+
+                              return (
+                                <tr key={person.id} className="hover:bg-gray-50 dark:hover:bg-neutral-900/30 transition-colors">
+                                  <td className="p-4">
+                                    <div className="flex items-center gap-2">
+                                      <span className={`w-2 h-2 rounded-full ${isWorking ? 'bg-emerald-500 animate-pulse' : 'bg-yellow-500'} shrink-0`}></span>
+                                      <div>
+                                        <p className="font-bold text-sm text-gray-900 dark:text-white leading-tight">{person.name}</p>
+                                        <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mt-0.5">{person.role}</p>
+                                      </div>
+                                    </div>
+                                  </td>
+                                  <td className="p-4 text-center font-mono text-xs text-gray-600 dark:text-neutral-400 flex items-center justify-center gap-1.5"><LogIn size={12} className="text-gray-400"/> {formatTime(strictFirstPunch)}</td>
+                                  <td className="p-4 text-center font-mono text-xs text-gray-600 dark:text-neutral-400">{isWorking ? <span className="text-emerald-500 font-black text-[10px] uppercase tracking-widest animate-pulse">Active</span> : formatTime(strictLastPunch)}</td>
+                                  <td className="p-4 text-right font-mono font-black text-sm text-emerald-600 dark:text-emerald-400">{formatDuration(workMins)}</td>
+                                  <td className="p-4 text-right font-mono font-black text-sm text-red-500 dark:text-red-400">{formatDuration(breakMins)}</td>
+                                </tr>
+                              )
+                            })}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* ── SMART SYSTEM FEED (FINANCE & ADMIN LOGS ONLY) ────────────────────────── */}
+        <div className="space-y-4 flex flex-col h-[700px] xl:h-[auto]">
+          <div className="flex items-center justify-between px-1 shrink-0">
+            <h2 className="text-sm font-black text-gray-900 dark:text-white uppercase tracking-widest flex items-center gap-2">
+              <History size={16} className="text-purple-500" /> Admin Audit Log
+            </h2>
+          </div>
+
+          <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-3xl shadow-sm flex flex-col flex-1 overflow-hidden">
+            
+            <div className="p-3 md:p-4 border-b border-gray-100 dark:border-neutral-900 bg-gray-50/50 dark:bg-neutral-900/20 flex flex-wrap items-center justify-between gap-2 md:gap-3 shrink-0">
+              <p className="text-[10px] font-black uppercase tracking-widest text-gray-500 dark:text-neutral-400 pl-2">High-Level Events</p>
+              
+              <div className="flex items-center gap-1 bg-white dark:bg-[#111] border border-gray-200 dark:border-neutral-800 rounded-xl p-1 shrink-0">
+                <button onClick={handlePrevDay} className="p-1.5 hover:bg-gray-100 dark:hover:bg-neutral-800 rounded-lg transition-colors text-gray-500"><ChevronLeft size={16}/></button>
+                <div className="relative">
+                  <input type="date" value={filterDate} onChange={e => setFilterDate(e.target.value)} className="bg-transparent text-[10px] md:text-xs font-black text-gray-700 dark:text-neutral-300 outline-none cursor-pointer w-24 text-center leading-none" />
+                </div>
+                <button onClick={handleNextDay} disabled={!filterDate} className="p-1.5 hover:bg-gray-100 dark:hover:bg-neutral-800 rounded-lg transition-colors text-gray-500 disabled:opacity-30"><ChevronRight size={16}/></button>
+                {filterDate && <button onClick={clearDate} className="p-1.5 hover:bg-red-100 dark:hover:bg-red-900/30 text-red-500 rounded-lg transition-colors ml-1"><X size={14}/></button>}
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto custom-scrollbar p-5 md:p-8">
+              {logsLoading ? (
+                <div className="flex justify-center py-20"><Loader2 className="animate-spin text-purple-500" size={28} /></div>
+              ) : Object.keys(groupedFilteredLogs).length === 0 ? (
+                <div className="flex flex-col items-center justify-center text-center py-24 opacity-50">
+                  <FileText size={40} className="mb-4 text-gray-400" />
+                  <p className="text-base font-black text-gray-900 dark:text-white">No logs found</p>
+                  <p className="text-sm font-bold text-gray-500 mt-1">No administrative activity matches your current filters.</p>
+                  <button onClick={clearDate} className="px-4 py-2 bg-gray-100 dark:bg-neutral-800 rounded-lg text-xs font-black text-gray-600 dark:text-neutral-300 mt-4 hover:bg-gray-200 transition-colors">Clear Filters</button>
+                </div>
+              ) : (
+                <div className="space-y-8">
+                  {Object.entries(groupedFilteredLogs).map(([dateLabel, logs]) => (
+                    <div key={dateLabel}>
+                      <div className="flex items-center gap-4 mb-5 sticky top-0 bg-white/90 dark:bg-[#0a0a0a]/90 backdrop-blur-sm z-10 py-1 -mt-1">
+                        <span className="text-[10px] font-black uppercase tracking-widest text-gray-500 bg-gray-100 dark:bg-neutral-900 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-neutral-800">{dateLabel}</span>
+                        <div className="h-px bg-gray-100 dark:bg-neutral-800 flex-1"></div>
+                      </div>
+                      
+                      <div className="relative pl-4 md:pl-6 border-l-2 border-gray-100 dark:border-neutral-800/80 space-y-6">
+                        {logs.map((log) => {
+                          const style = LOG_MAP[log.action_type] || LOG_MAP.default;
+                          return (
+                            <div key={log.id} className="relative group">
+                              <div className={`absolute -left-[21px] md:-left-[29px] top-1 w-3.5 h-3.5 rounded-full ring-4 ring-white dark:ring-[#0a0a0a] ${style.dot} shadow-sm`} />
+                              
+                              <div className="pl-2 md:pl-3">
+                                <p className="text-sm font-bold text-gray-900 dark:text-neutral-100 leading-snug mb-2">{log.description}</p>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className={`px-2.5 py-1 rounded-md text-[9px] font-black uppercase tracking-widest ${style.bg} ${style.color}`}>
+                                    {style.label}
                                   </span>
-                                )}
+                                  <span className="text-[10px] font-bold text-gray-400 tabular-nums">
+                                    {new Date(log.created_at).toLocaleTimeString("en-IN", { hour: '2-digit', minute: '2-digit', hour12: true })}
+                                  </span>
+                                  {log.actor_name && (
+                                    <span className="text-[10px] font-bold text-gray-500 flex items-center gap-1.5 border-l border-gray-200 dark:border-neutral-800 pl-2">
+                                      By <span className="text-gray-700 dark:text-neutral-300">{log.actor_name}</span>
+                                    </span>
+                                  )}
+                                </div>
                               </div>
                             </div>
-                          </div>
-                        );
-                      })}
+                          );
+                        })}
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </div>
-            )}
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
