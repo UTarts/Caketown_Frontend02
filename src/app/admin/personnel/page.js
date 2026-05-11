@@ -31,18 +31,39 @@ const calculateAge = (dob) => {
 
 // ─── PERMISSIONS CONFIG ───
 const ALL_PERMISSIONS = [
-  { category: "Attendance", items: [
+  { category: "Dashboard & Analytics", items: [
+    { id: "view_dashboard", label: "View Manager Dashboard", read: true, write: false },
+    { id: "view_reports", label: "Access Master Reports", read: true, write: false },
+  ]},
+  { category: "Staff & Personnel", items: [
+    { id: "view_staff_list", label: "View Staff Roster", read: true, write: false },
+    { id: "view_staff_profile", label: "View Staff Profiles", read: true, write: false },
+    { id: "manage_staff", label: "Add / Edit Staff Details", read: false, write: true },
+    { id: "deactivate_staff", label: "Deactivate Personnel", read: false, write: true },
+  ]},
+  { category: "Attendance & Biometrics", items: [
     { id: "view_live_attendance", label: "View Live Floor Status", read: true, write: false },
     { id: "view_attendance_history", label: "View Attendance History", read: true, write: false },
     { id: "edit_attendance", label: "Override / Edit Attendance", read: true, write: true },
-    { id: "manage_terminal", label: "Manage Biometric Terminal", read: false, write: true },
-    { id: "register_face", label: "Register Employee Face", read: false, write: true },
+    { id: "manage_terminal", label: "Manage Biometric Terminal", read: true, write: true }, // Changed to true
+    { id: "register_face", label: "Register Employee Face", read: true, write: true }, // Changed to true
+  ]},
+  { category: "Leave Management", items: [
+    { id: "view_leaves", label: "View Leave Applications", read: true, write: false },
+    { id: "manage_leaves", label: "Approve / Reject Leaves", read: false, write: true },
   ]},
   { category: "Payroll & Finance", items: [
-    { id: "view_payroll", label: "View Payroll Data", read: true, write: false },
-    { id: "edit_payroll", label: "Edit / Finalize Payroll", read: false, write: true },
-    { id: "log_advance", label: "Log Advance / Pre-Advance", read: false, write: true },
+    { id: "view_payroll", label: "View Payroll Ledgers", read: true, write: false },
+    { id: "process_payroll", label: "Process / Pay Salaries", read: false, write: true },
+    { id: "download_salary_slip", label: "Download Salary Slips", read: true, write: false },
+    { id: "log_advance", label: "Log Standard Advances", read: false, write: true },
+    { id: "log_shop_bill", label: "Log Shop Bills & Fines", read: false, write: true },
+    { id: "view_finance_ledger", label: "View Master Finance Ledger", read: true, write: false },
+    { id: "delete_finance_record", label: "Void / Delete Finance Records", read: false, write: true },
   ]},
+  { category: "System Security", items: [
+    { id: "view_system_logs", label: "View Branch System Logs", read: true, write: false },
+  ]}
 ];
 
 const BLANK_FORM = {

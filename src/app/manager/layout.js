@@ -1,36 +1,52 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
-import { 
-  LayoutDashboard, ScanFace, Users, LogOut, Sun, Moon, ChevronRight, ShieldCheck, UserCircle 
+import {
+  LayoutDashboard, Users, LogOut, Banknote, Sun, Moon, 
+  Activity, CalendarDays, History, Menu, X, UserCircle2, Shield, ScanFace, MonitorPlay, MapPin
 } from "lucide-react";
 import { logout } from "@/lib/apiClient";
+import { canRead } from "@/lib/permissions";
 
 export default function ManagerLayout({ children }) {
   const router = useRouter();
   const pathname = usePathname();
+  
   const [user, setUser] = useState(null);
   const [dark, setDark] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+
+  const profileMenuRef = useRef(null);
 
   useEffect(() => {
-    // Theme init
     const saved = localStorage.getItem("theme");
     const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
     const isDark = saved ? saved === "dark" : prefersDark;
     setDark(isDark);
     document.documentElement.classList.toggle("dark", isDark);
 
-    // Auth init
+    const handleClickOutside = (event) => {
+      if (profileMenuRef.current && !profileMenuRef.current.contains(event.target)) {
+        setProfileMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  useEffect(() => {
     const session = localStorage.getItem("caketown_session");
-    if (!session) { router.replace("/"); return; }
+    if (!session) { router.push("/"); return; }
+    
     try {
       const parsed = JSON.parse(session);
-      if (parsed.role !== "manager") { router.replace("/"); return; }
+      if (parsed.role !== "manager") { router.push("/"); return; }
       setUser(parsed);
     } catch (e) {
-      router.replace("/");
+      router.push("/");
     }
   }, [router]);
 
@@ -41,131 +57,177 @@ export default function ManagerLayout({ children }) {
     localStorage.setItem("theme", next ? "dark" : "light");
   };
 
+  const handleLogout = () => logout(router);
+
   if (!user) return null;
 
   const initials = user.name.split(" ").map(n => n[0]).join("").substring(0, 2).toUpperCase();
 
-  const navItems = [
-    { name: "Dashboard", path: "/manager/dashboard", icon: LayoutDashboard },
-    { name: "Terminal",  path: "/manager/terminal",  icon: ScanFace },
-    { name: "Faces",     path: "/manager/faces",     icon: ShieldCheck },
-    { name: "Profile",   path: "/manager/profile",   icon: UserCircle },
+  // ─── RBAC MANAGER NAVIGATION ───
+  const ALL_NAV_ITEMS = [
+    { name: "Dashboard", path: "/manager/dashboard", icon: LayoutDashboard, perm: null, exact: true },
+    { name: "Live Floor", path: "/manager/live-floor", icon: Activity, perm: "view_live_attendance" },
+    { name: "Terminal Ops", path: "/manager/terminal", icon: MonitorPlay, perm: "manage_terminal" },
+    { name: "Face Data", path: "/manager/faces", icon: ScanFace, perm: "register_face" },
+    { name: "Staff Roster", path: "/manager/staff", icon: Users, perm: "view_staff_list" },
+    { name: "Attendance", path: "/manager/attendance", icon: CalendarDays, perm: "view_attendance_history" },
+    { name: "Payroll", path: "/manager/payroll", icon: Banknote, perm: "view_payroll" },
+    { name: "Finance Ledger", path: "/manager/finance", icon: History, perm: "view_finance_ledger" },
+    { name: "System Logs", path: "/manager/system", icon: History, perm: "view_system_logs" },
   ];
 
-  // Smart check: Is this the terminal page?
-  const isTerminal = pathname.includes('/terminal');
+  const authorizedNavItems = ALL_NAV_ITEMS.filter(item => 
+    item.perm === null || canRead(user.feature_permissions, item.perm)
+  );
 
-  return (
-    <div className="min-h-screen bg-gray-50 dark:bg-[#050505] flex selection:bg-emerald-500 selection:text-white">
+  const isActive = (path, exact = false) => {
+    if (exact) return pathname === path;
+    const baseNavPath = path.split('?')[0];
+    return pathname.startsWith(baseNavPath);
+  };
 
-      {/* ── Mobile Top Bar (With Diagonal Logo) ──────────────── */}
-      <div className="md:hidden fixed top-0 left-0 right-0 z-40 bg-white/80 dark:bg-black/80 backdrop-blur-xl border-b border-gray-200 dark:border-neutral-800 h-16 flex items-center justify-between shadow-sm">
-        <div className="absolute top-0 left-0 h-16 w-40 bg-white shadow-[2px_0_10px_rgba(0,0,0,0.1)] z-10" style={{ clipPath: 'polygon(0 0, 100% 0, 85% 100%, 0 100%)' }}>
-          <img src="/logo.png" alt="Caketown" className="w-full h-full object-contain p-2 pr-6" />
-        </div>
-        <div className="flex-1"></div>
-        <button onClick={toggleTheme} className="p-2.5 mr-4 rounded-full bg-gray-100 dark:bg-neutral-900 text-gray-600 dark:text-neutral-300 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors z-20">
-          {dark ? <Sun size={18} /> : <Moon size={18} />}
-        </button>
+  const SidebarContent = () => (
+    <>
+      {/* Premium Diagonal Logo Container */}
+      <div className="h-24 w-full bg-white shadow-[0_2px_15px_rgba(0,0,0,0.03)] shrink-0 flex flex-col justify-center px-6 relative z-10" style={{ clipPath: 'polygon(0 0, 100% 0, 100% 85%, 0 100%)' }}>
+         <img src="/logo.png" alt="Caketown" className="h-10 w-auto object-contain object-center" onError={(e) => { e.target.style.display='none'; }}/>
       </div>
 
-      {/* ── Desktop Sidebar ────────────────────────────────────────── */}
-      <aside className="hidden md:flex fixed top-0 left-0 h-full w-72 bg-white dark:bg-black border-r border-gray-200 dark:border-neutral-800 flex-col z-50">
-        
-        {/* Desktop Diagonal Logo Container */}
-        <div className="h-24 w-full bg-white shadow-[0_2px_15px_rgba(0,0,0,0.03)] shrink-0" style={{ clipPath: 'polygon(0 0, 100% 0, 100% 85%, 0 100%)' }}>
-           <img src="/logo.png" alt="Caketown Console" className="w-full h-full object-contain p-4 pb-6" />
-        </div>
-        
-        {/* Logo Area */}
-        <div className="h-20 px-6 flex items-center border-b border-gray-100 dark:border-neutral-800 shrink-0">
-          <div>
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-xl bg-emerald-500 text-white flex items-center justify-center text-sm font-black shadow-lg shadow-emerald-500/30">C</div>
-              <span className="text-xl font-black text-gray-900 dark:text-white tracking-tight">Manager Console</span>
-            </div>
+      <nav className="flex-1 overflow-y-auto custom-scrollbar px-4 py-5 space-y-6">
+        <div>
+          <p className="px-3 text-[9px] font-black text-gray-400 uppercase tracking-widest mb-2">Branch Operations</p>
+          <div className="space-y-1">
+            {authorizedNavItems.map(item => {
+              const active = isActive(item.path, item.exact);
+              const Icon = item.icon;
+              return (
+                <Link key={item.name} href={item.path} onClick={() => setMobileMenuOpen(false)} className={`flex items-center gap-3 px-3 py-3 rounded-xl transition-all duration-200 font-bold text-sm ${active ? "bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400" : "text-gray-600 dark:text-neutral-400 hover:bg-gray-50 dark:hover:bg-neutral-900 hover:text-gray-900 dark:hover:text-white"}`}>
+                  <Icon size={16} className={active ? 'text-blue-600 dark:text-blue-400' : ''} strokeWidth={active ? 2.5 : 2} />
+                  <span className="flex-1">{item.name}</span>
+                </Link>
+              );
+            })}
           </div>
         </div>
+      </nav>
 
-        {/* Desktop Nav */}
-        <nav className="flex-1 px-4 py-6 space-y-1.5 overflow-y-auto custom-scrollbar">
-          {navItems.map(item => {
-            const active = pathname.startsWith(item.path);
-            const Icon = item.icon;
-            return (
-              <Link
-                key={item.name}
-                href={item.path}
-                className={`flex items-center gap-3 px-4 py-3.5 rounded-2xl transition-all duration-300 font-semibold group ${
-                  active
-                    ? "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 shadow-sm shadow-emerald-100/50 dark:shadow-none"
-                    : "text-gray-500 dark:text-neutral-400 hover:bg-gray-100 dark:hover:bg-neutral-900 hover:text-gray-900 dark:hover:text-white"
-                }`}
-              >
-                <Icon size={18} className={`shrink-0 ${active ? 'text-emerald-600 dark:text-emerald-400' : ''}`} strokeWidth={active ? 2.5 : 2} />
-                <span className="flex-1">{item.name}</span>
-                {active && <ChevronRight size={16} className="opacity-50" />}
-              </Link>
-            );
-          })}
-        </nav>
+      <div className="p-4 border-t border-gray-100 dark:border-neutral-800 shrink-0 bg-white dark:bg-black z-10 flex items-center justify-between relative" ref={profileMenuRef}>
+        <button onClick={() => setProfileMenuOpen(!profileMenuOpen)} className="flex items-center gap-3 hover:bg-gray-50 dark:hover:bg-neutral-900 p-1.5 rounded-xl transition-colors text-left min-w-0 flex-1">
+          <div className="w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400 flex items-center justify-center font-black text-sm border border-blue-200 dark:border-blue-800 shrink-0">
+            {initials}
+          </div>
+          <div className="overflow-hidden flex-1 min-w-0">
+            <p className="text-sm font-black text-gray-900 dark:text-white truncate">{user.name}</p>
+            <p className="text-[10px] font-bold text-emerald-600 dark:text-emerald-500 uppercase tracking-widest truncate flex items-center gap-1"><MapPin size={10}/> {user.branch_name || "Manager"}</p>
+          </div>
+        </button>
 
-        {/* Desktop Bottom: Theme + User + Logout */}
-        <div className="p-4 border-t border-gray-100 dark:border-neutral-800 shrink-0 space-y-3">
-          <button
-            onClick={toggleTheme}
-            className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold text-gray-500 dark:text-neutral-400 hover:bg-gray-100 dark:hover:bg-neutral-900 transition-colors"
-          >
-            {dark ? <Sun size={18} /> : <Moon size={18} />}
-            {dark ? "Light Mode" : "Dark Mode"}
-          </button>
+        <div className="shrink-0 flex flex-col items-end justify-center pl-2 border-l border-gray-100 dark:border-neutral-800">
+          <span className="text-[8px] font-black text-gray-400 uppercase tracking-widest mb-0.5">Powered By</span>
+          <a href="https://www.utarts.in" target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 hover:opacity-80 transition-opacity">
+            <img src="https://tzaxthrqwfgbrcqmtuec.supabase.co/storage/v1/object/public/images/UTArt_Logo.webp" alt="UT Arts" className="h-5 w-5 rounded-full object-cover border border-gray-200 dark:border-neutral-700" />
+            <span className="font-black text-xs text-blue-600 dark:text-blue-400">UT Arts</span>
+          </a>
+        </div>
 
-          <div className="bg-gray-50 dark:bg-neutral-900/50 rounded-2xl p-4 flex flex-col gap-3 border border-gray-100 dark:border-neutral-800">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 flex items-center justify-center font-black text-sm border border-emerald-200 dark:border-emerald-800 shrink-0">
-                {initials}
-              </div>
-              <div className="overflow-hidden flex-1 min-w-0">
-                <p className="text-sm font-bold text-gray-900 dark:text-white truncate">{user.name}</p>
-                <p className="text-[10px] text-gray-400 dark:text-neutral-500 uppercase tracking-widest truncate">{user.branch_name}</p>
-              </div>
-            </div>
-            <button
-              onClick={() => logout(router)}
-              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-bold text-red-600 bg-white dark:bg-black border border-gray-200 dark:border-neutral-800 hover:bg-red-50 dark:hover:bg-red-500/10 hover:border-red-100 dark:hover:border-red-900/50 transition-all"
-            >
-              <LogOut size={16} /> Logout
+        {profileMenuOpen && (
+          <div className="absolute bottom-[110%] left-4 right-4 bg-white dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-2xl shadow-xl p-2 mb-2 animate-in slide-in-from-bottom-2 duration-200 z-50">
+            <Link href="/manager/profile" onClick={() => setProfileMenuOpen(false)} className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-bold text-gray-700 dark:text-neutral-300 hover:bg-gray-50 dark:hover:bg-neutral-900 transition-colors">
+              <UserCircle2 size={16} /> My Personal Profile
+            </Link>
+            <button onClick={toggleTheme} className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-bold text-gray-700 dark:text-neutral-300 hover:bg-gray-50 dark:hover:bg-neutral-900 transition-colors">
+              {dark ? <Sun size={16} /> : <Moon size={16} />} Switch to {dark ? "Light" : "Dark"} Mode
+            </button>
+            <div className="h-px bg-gray-100 dark:bg-neutral-900 my-1"></div>
+            <button onClick={handleLogout} className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-bold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors">
+              <LogOut size={16} /> Secure Logout
             </button>
           </div>
+        )}
+      </div>
+    </>
+  );
+
+  return (
+    <div className="min-h-screen bg-gray-50 dark:bg-[#050505] selection:bg-blue-500 selection:text-white flex">
+
+      {/* ── Mobile Top Header ──────────────── */}
+      <div className="md:hidden fixed top-0 left-0 right-0 z-40 bg-white/80 dark:bg-black/80 backdrop-blur-xl border-b border-gray-200 dark:border-neutral-800 h-16 flex items-center justify-between shadow-sm px-4">
+        <div className="absolute top-0 left-0 h-16 w-48 bg-white shadow-[2px_0_10px_rgba(0,0,0,0.1)] z-10 flex flex-col justify-center px-4" style={{ clipPath: 'polygon(0 0, 100% 0, 85% 100%, 0 100%)' }}>
+          <img src="/logo.png" alt="Caketown" className="h-6 w-auto object-contain object-left" onError={(e) => { e.target.style.display='none'; }} />
+          <span className="text-[8px] text-blue-600 font-black uppercase tracking-widest mt-0.5">Manager</span>
         </div>
+        
+        {/* Quick Profile Access on Mobile Header */}
+        <div className="flex-1"></div>
+        <Link href="/manager/profile" className="z-20 w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400 flex items-center justify-center font-black text-xs border border-blue-200 dark:border-blue-800 shadow-sm">
+          {initials}
+        </Link>
+      </div>
+
+      {/* ── Mobile Slide-out Drawer (For 'More' items) ──────────────── */}
+      {mobileMenuOpen && (
+        <div className="md:hidden fixed inset-0 z-[100] flex">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setMobileMenuOpen(false)}></div>
+          <div className="relative w-4/5 max-w-sm bg-white dark:bg-black h-full flex flex-col shadow-2xl animate-in slide-in-from-left duration-300">
+            <button onClick={() => setMobileMenuOpen(false)} className="absolute top-4 right-4 p-2 bg-gray-100 dark:bg-neutral-900 rounded-full z-50 text-gray-600 dark:text-neutral-400"><X size={20}/></button>
+            <SidebarContent />
+          </div>
+        </div>
+      )}
+
+      {/* ── Desktop Sidebar ────────────────────────────────────────── */}
+      <aside className="hidden md:flex fixed top-0 left-0 h-full w-72 bg-white dark:bg-[#050505] border-r border-gray-200 dark:border-neutral-800 flex-col z-30 shadow-[4px_0_24px_rgba(0,0,0,0.02)]">
+        <SidebarContent />
       </aside>
 
       {/* ── Main content ───────────────────────────────────── */}
-      <main className="flex-1 md:ml-72 pt-16 md:pt-0 pb-24 md:pb-0 min-h-screen">
-        <div className={isTerminal ? "w-full h-full" : "p-4 md:p-8 max-w-[1440px] mx-auto animate-in fade-in duration-500"}>
+      <main className="flex-1 md:ml-72 pt-16 md:pt-0 min-h-screen relative z-0 pb-28 md:pb-0">
+        <div className="p-4 md:p-8 max-w-[1600px] mx-auto animate-in fade-in duration-500">
           {children}
         </div>
       </main>
 
-      {/* ── Mobile Bottom Nav ──────────────────────────────── */}
-      <nav className="md:hidden fixed bottom-0 w-full bg-white/90 dark:bg-black/90 backdrop-blur-2xl border-t border-gray-200 dark:border-neutral-800 z-[100] px-2 pt-2 pb-safe shadow-[0_-10px_40px_-15px_rgba(0,0,0,0.1)] dark:shadow-none">
-        <div className="flex justify-around items-center mb-2">
-          {navItems.map((item) => {
-            const active = pathname.startsWith(item.path);
+      {/* ── HIGH-END MOBILE BOTTOM NAVBAR (Glassmorphic) ──────────────── */}
+      <div className="md:hidden fixed bottom-4 left-4 right-4 z-50 animate-in slide-in-from-bottom-6 duration-500 pb-safe">
+        <div className="bg-white/85 dark:bg-[#0a0a0a]/85 backdrop-blur-2xl border border-gray-200/60 dark:border-neutral-800/60 shadow-[0_8px_30px_rgb(0,0,0,0.12)] rounded-3xl p-2 flex items-center justify-between">
+          
+          {/* Render top 4 authorized items */}
+          {authorizedNavItems.slice(0, 4).map((item) => {
+            const active = isActive(item.path, item.exact);
             const Icon = item.icon;
             return (
-              <Link key={item.name} href={item.path} className="flex-1 flex flex-col items-center gap-1 p-1">
-                <div className={`relative p-2 rounded-xl transition-all duration-300 ${active ? 'bg-emerald-100 dark:bg-emerald-500/20' : 'bg-transparent'}`}>
-                  <Icon size={22} className={active ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-400 dark:text-neutral-500'} strokeWidth={active ? 2.5 : 2} />
-                </div>
-                <span className={`text-[10px] font-bold transition-colors ${active ? 'text-emerald-700 dark:text-emerald-400' : 'text-gray-500 dark:text-neutral-500'}`}>
-                  {item.name}
+              <Link 
+                key={item.name} 
+                href={item.path} 
+                className="relative flex-1 flex flex-col items-center justify-center p-2 rounded-2xl group transition-all"
+              >
+                {active && (
+                  <span className="absolute inset-0 bg-blue-50 dark:bg-blue-500/20 rounded-2xl -z-10 animate-in zoom-in-90 duration-200"></span>
+                )}
+                <Icon size={20} className={`mb-1 transition-colors ${active ? 'text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-neutral-400'}`} strokeWidth={active ? 2.5 : 2} />
+                <span className={`text-[9px] font-black tracking-wide ${active ? 'text-blue-700 dark:text-blue-300' : 'text-gray-500 dark:text-neutral-500'}`}>
+                  {item.name.split(" ")[0]} {/* Keep name short for mobile */}
                 </span>
               </Link>
             );
           })}
+
+          {/* Render "Menu" trigger if there are more than 4 items */}
+          {authorizedNavItems.length > 4 && (
+            <button 
+              onClick={() => setMobileMenuOpen(true)} 
+              className="relative flex-1 flex flex-col items-center justify-center p-2 rounded-2xl transition-all"
+            >
+              <Menu size={20} className="mb-1 text-gray-500 dark:text-neutral-400" strokeWidth={2} />
+              <span className="text-[9px] font-black tracking-wide text-gray-500 dark:text-neutral-500">
+                More
+              </span>
+            </button>
+          )}
+
         </div>
-      </nav>
+      </div>
 
     </div>
   );

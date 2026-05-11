@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import * as faceapi from "face-api.js";
 import { callApi } from "@/lib/apiClient";
+import { canRead } from "@/lib/permissions";
 import {
   ScanFace, Loader2, AlertCircle, CheckCircle2, Power, Pause,
   Camera, Users, ShieldCheck, RefreshCw, Activity, Clock3, UserCheck, UserX
@@ -45,6 +47,7 @@ function formatDuration(minutes) {
 }
 
 export default function BiometricTerminal() {
+  const router = useRouter();
   const [session, setSession] = useState(null);
   const [terminalActive, setTerminalActive] = useState(false);
   const [isModelsLoaded, setIsModelsLoaded] = useState(false);
@@ -70,18 +73,28 @@ export default function BiometricTerminal() {
 
   useEffect(() => {
     const rawSession = localStorage.getItem("caketown_session");
-    if (rawSession) {
-      const parsed = JSON.parse(rawSession);
-      setSession(parsed);
-      fetchRecentFromDb(parsed.branch_id);
-      
-      const interval = setInterval(() => fetchRecentFromDb(parsed.branch_id, true), 10000);
-      return () => {
-        clearInterval(interval);
-        stopTerminal();
-      };
+    if (!rawSession) {
+      router.push("/");
+      return;
     }
-  }, []);
+    
+    const parsed = JSON.parse(rawSession);
+    
+    // ─── GATEKEEPER: TERMINAL ACCESS ───
+    if (!canRead(parsed.feature_permissions, 'manage_terminal')) {
+      router.push("/manager/dashboard");
+      return;
+    }
+    
+    setSession(parsed);
+    fetchRecentFromDb(parsed.branch_id);
+    
+    const interval = setInterval(() => fetchRecentFromDb(parsed.branch_id, true), 10000);
+    return () => {
+      clearInterval(interval);
+      stopTerminal();
+    };
+  }, [router]);
 
   const fetchRecentFromDb = async (branchId, silent = false) => {
     if (!branchId) return;
@@ -105,7 +118,7 @@ export default function BiometricTerminal() {
               flat.push({
                 id: `${person.id}-${time}-${index}`,
                 name: person.name,
-                role: person.role || "Staff",
+                role: person.department || "Staff",
                 type: index % 2 === 0 ? "IN" : "OUT",
                 rawTime: time,
                 time: new Date(time).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }),
@@ -286,7 +299,6 @@ export default function BiometricTerminal() {
         try {
           res = await callApi("log_punch", { user_id: matchedUserId, branch_id: session.branch_id });
         } catch (apiErr) {
-          console.error("API Network Error:", apiErr);
           setSystemMessage({ text: "Network error saving punch.", type: "error" });
           tempLockRef.current.delete(matchedUserId);
           processingRef.current = false;
@@ -306,7 +318,6 @@ export default function BiometricTerminal() {
           setSystemMessage({ text: res?.message || "Punch failed.", type: "error" });
         }
       } catch (err) {
-        console.error("Face Processing Error:", err);
         setSystemMessage({ text: "Camera processing error.", type: "error" });
       } finally {
         processingRef.current = false;
@@ -330,17 +341,17 @@ export default function BiometricTerminal() {
   if (!session) return <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-[#050505]"><Loader2 className="animate-spin text-emerald-500" size={34} /></div>;
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-[#050505] text-gray-900 dark:text-white font-sans flex flex-col md:flex-row selection:bg-emerald-500 selection:text-white relative z-0">
+    <div className="min-h-[calc(100vh-80px)] bg-transparent text-gray-900 dark:text-white font-sans flex flex-col md:flex-row selection:bg-emerald-500 selection:text-white relative z-0 animate-in fade-in duration-500 rounded-3xl overflow-hidden border border-gray-200 dark:border-neutral-800 shadow-sm">
       
       {/* --- LEFT / TOP PORTION: THE CAMERA HERO --- */}
-      <div className="w-full md:w-1/2 lg:w-3/5 relative flex flex-col items-center justify-center p-4 md:p-8 border-b md:border-b-0 md:border-r border-gray-200 dark:border-neutral-900 bg-white dark:bg-black z-0">
-        <div className="w-full max-w-lg aspect-[3/4] md:aspect-auto md:h-[80vh] bg-gray-100 dark:bg-[#111] rounded-[2rem] border border-gray-200 dark:border-neutral-800 overflow-hidden relative shadow-2xl shadow-emerald-500/5">
+      <div className="w-full md:w-1/2 lg:w-3/5 relative flex flex-col items-center justify-center p-4 md:p-8 border-b md:border-b-0 md:border-r border-gray-200 dark:border-neutral-900 bg-white dark:bg-[#0a0a0a] z-0">
+        <div className="w-full max-w-lg aspect-[3/4] md:aspect-auto md:h-[75vh] bg-gray-100 dark:bg-[#111] rounded-[2rem] border border-gray-200 dark:border-neutral-800 overflow-hidden relative shadow-2xl shadow-emerald-500/5">
           
           <video ref={videoRef} autoPlay muted playsInline onPlay={handleVideoOnPlay} className="absolute inset-0 w-full h-full object-cover md:object-contain bg-gray-900 dark:bg-black z-10" />
           <canvas ref={canvasRef} className="absolute inset-0 w-full h-full object-cover md:object-contain z-20" />
 
           {!terminalActive && (
-            <div className="absolute inset-0 z-30 flex flex-col items-center justify-center p-6 text-center bg-white/80 dark:bg-black/80 backdrop-blur-sm">
+            <div className="absolute inset-0 z-30 flex flex-col items-center justify-center p-6 text-center bg-white/80 dark:bg-black/80 ">
               <div className="w-20 h-20 bg-gray-50 dark:bg-neutral-900 rounded-full flex items-center justify-center mb-4 border border-gray-200 dark:border-neutral-800">
                 <ScanFace size={36} className="text-emerald-500" />
               </div>
@@ -372,7 +383,7 @@ export default function BiometricTerminal() {
         <button 
           onClick={terminalActive ? stopTerminal : startTerminal} 
           disabled={loading}
-          className={`mt-6 w-full max-w-lg py-4 rounded-2xl font-black text-sm flex items-center justify-center gap-2 transition-all shadow-lg active:scale-95 disabled:opacity-50 ${terminalActive ? "bg-red-500 hover:bg-red-600 shadow-red-500/20 text-white" : "bg-emerald-500 hover:bg-emerald-600 shadow-emerald-500/20 text-white"}`}
+          className={`mt-6 w-full max-w-lg py-4 rounded-2xl font-black text-sm flex items-center justify-center gap-2 transition-all shadow-lg active:scale-95 disabled:opacity-50 ${terminalActive ? "bg-red-500 hover:bg-red-600 shadow-red-500/20 text-white border-red-400" : "bg-emerald-500 hover:bg-emerald-600 shadow-emerald-500/20 text-white border-emerald-400"}`}
         >
           {loading ? <Loader2 className="animate-spin" size={20} /> : terminalActive ? <Pause size={20} /> : <Power size={20} />}
           {terminalActive ? "Stop Biometric Terminal" : "Initialize Terminal"}
@@ -380,31 +391,31 @@ export default function BiometricTerminal() {
       </div>
 
       {/* --- RIGHT / BOTTOM PORTION: LIVE STATS & FEED --- */}
-      <div className="w-full md:w-1/2 lg:w-2/5 flex flex-col p-4 md:p-8 bg-gray-50 dark:bg-[#0a0a0a] md:max-h-screen md:overflow-y-auto custom-scrollbar z-0">
+      <div className="w-full md:w-1/2 lg:w-2/5 flex flex-col p-4 md:p-8 bg-gray-50/50 dark:bg-[#050505] md:max-h-[calc(100vh-80px)] md:overflow-y-auto custom-scrollbar z-0">
         
         <div className="flex items-center justify-between mb-8">
           <div>
             <p className="text-[10px] text-emerald-600 dark:text-emerald-500 font-black uppercase tracking-widest mb-1">Live Environment</p>
             <h1 className="text-2xl font-black text-gray-900 dark:text-white">{session.branch_name}</h1>
           </div>
-          <button onClick={() => fetchRecentFromDb(session.branch_id, false)} disabled={syncingFeed} className="p-3 bg-white dark:bg-neutral-900 border border-gray-200 dark:border-neutral-800 hover:border-emerald-500/50 rounded-xl text-gray-500 dark:text-neutral-400 hover:text-emerald-600 dark:hover:text-emerald-400 transition-all shadow-sm">
+          <button onClick={() => fetchRecentFromDb(session.branch_id, false)} disabled={syncingFeed} className="p-3 bg-white dark:bg-[#111] border border-gray-200 dark:border-neutral-800 hover:border-emerald-500/50 rounded-xl text-gray-500 dark:text-neutral-400 hover:text-emerald-600 dark:hover:text-emerald-400 transition-all shadow-sm">
             <RefreshCw size={18} className={syncingFeed ? "animate-spin text-emerald-500" : ""} />
           </button>
         </div>
 
         {/* Environment Stats */}
         <div className="grid grid-cols-3 gap-3 mb-8">
-          <div className="bg-white dark:bg-neutral-900 border border-gray-200 dark:border-neutral-800 rounded-2xl p-4 shadow-sm">
+          <div className="bg-white dark:bg-[#111] border border-gray-200 dark:border-neutral-800 rounded-2xl p-4 shadow-sm">
             <Activity size={16} className="text-emerald-500 mb-2" />
             <p className="text-2xl font-black tabular-nums text-gray-900 dark:text-white">{presentCount}</p>
             <p className="text-[9px] font-bold text-gray-400 dark:text-neutral-500 uppercase tracking-widest mt-1">Present</p>
           </div>
-          <div className="bg-white dark:bg-neutral-900 border border-gray-200 dark:border-neutral-800 rounded-2xl p-4 shadow-sm">
+          <div className="bg-white dark:bg-[#111] border border-gray-200 dark:border-neutral-800 rounded-2xl p-4 shadow-sm">
             <Users size={16} className="text-blue-500 mb-2" />
             <p className="text-2xl font-black tabular-nums text-gray-900 dark:text-white">{totalStaff}</p>
             <p className="text-[9px] font-bold text-gray-400 dark:text-neutral-500 uppercase tracking-widest mt-1">Total Staff</p>
           </div>
-          <div className="bg-white dark:bg-neutral-900 border border-gray-200 dark:border-neutral-800 rounded-2xl p-4 shadow-sm">
+          <div className="bg-white dark:bg-[#111] border border-gray-200 dark:border-neutral-800 rounded-2xl p-4 shadow-sm">
             <ShieldCheck size={16} className="text-purple-500 mb-2" />
             <p className="text-2xl font-black tabular-nums text-gray-900 dark:text-white">{rosterCount}</p>
             <p className="text-[9px] font-bold text-gray-400 dark:text-neutral-500 uppercase tracking-widest mt-1">Faces</p>
@@ -421,8 +432,8 @@ export default function BiometricTerminal() {
             const activePeople = allPeopleRef.current.filter(p => p.status === 'working' || p.status === 'on_break');
             if (activePeople.length === 0) {
               return (
-                <div className="flex flex-col items-center justify-center bg-gray-100/50 dark:bg-neutral-900/50 border border-gray-200 dark:border-neutral-800 border-dashed rounded-3xl p-6 text-center mb-8">
-                  <UserX size={28} className="text-gray-400 dark:text-neutral-600 mb-3" />
+                <div className="flex flex-col items-center justify-center bg-white dark:bg-[#111] border border-gray-200 dark:border-neutral-800 rounded-3xl p-6 text-center mb-8 shadow-sm">
+                  <UserX size={28} className="text-gray-300 dark:text-neutral-700 mb-3" />
                   <p className="text-sm font-bold text-gray-500 dark:text-neutral-400">No active sessions.</p>
                 </div>
               );
@@ -432,7 +443,7 @@ export default function BiometricTerminal() {
                 {activePeople.map(p => {
                   const breakMins = calculateBreakMinutes(p.punches);
                   return (
-                    <div key={p.id} className={`bg-white dark:bg-neutral-900 border rounded-2xl p-4 shadow-sm transition-colors ${p.status === 'working' ? 'border-emerald-200 dark:border-emerald-900/50 shadow-emerald-500/5' : 'border-gray-200 dark:border-neutral-800'}`}>
+                    <div key={p.id} className={`bg-white dark:bg-[#111] border rounded-2xl p-4 shadow-sm transition-colors ${p.status === 'working' ? 'border-emerald-200 dark:border-emerald-900/50 shadow-emerald-500/5' : 'border-gray-200 dark:border-neutral-800'}`}>
                       <div className="flex justify-between items-start mb-3">
                         <div>
                           <p className="font-black text-sm text-gray-900 dark:text-white">{p.name}</p>
@@ -464,14 +475,14 @@ export default function BiometricTerminal() {
           </h2>
           
           {recentPunches.length === 0 ? (
-            <div className="flex-1 flex flex-col items-center justify-center bg-gray-100/50 dark:bg-neutral-900/50 border border-gray-200 dark:border-neutral-800 border-dashed rounded-3xl p-8 text-center">
-              <Clock3 size={28} className="text-gray-400 dark:text-neutral-600 mb-3" />
+            <div className="flex-1 flex flex-col items-center justify-center bg-white dark:bg-[#111] border border-gray-200 dark:border-neutral-800 rounded-3xl p-8 text-center shadow-sm">
+              <Clock3 size={28} className="text-gray-300 dark:text-neutral-700 mb-3" />
               <p className="text-sm font-bold text-gray-500 dark:text-neutral-400">No punches recorded today.</p>
             </div>
           ) : (
             <div className="space-y-3 pb-8">
               {recentPunches.map((item) => (
-                <div key={item.id} className="bg-white dark:bg-neutral-900 border border-gray-200 dark:border-neutral-800 rounded-2xl p-4 flex items-center justify-between shadow-sm">
+                <div key={item.id} className="bg-white dark:bg-[#111] border border-gray-200 dark:border-neutral-800 rounded-2xl p-4 flex items-center justify-between shadow-sm hover:shadow-md transition-shadow">
                   <div className="flex items-center gap-4 min-w-0">
                     <span className={`flex items-center justify-center w-10 h-10 rounded-xl font-black text-xs shrink-0 ${
                       item.type === "IN" ? "bg-emerald-50 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-100 dark:border-emerald-500/30" : "bg-amber-50 dark:bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-100 dark:border-amber-500/30"

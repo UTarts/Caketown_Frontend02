@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useState, useCallback, Suspense } from "react";
-import { useSearchParams } from "next/navigation";
+import { useEffect, useState, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { callApi } from "@/lib/apiClient";
+import { canRead, canWrite } from "@/lib/permissions";
 import {
   CalendarDays, Loader2, Edit2, X, Check, Search, 
-  ChevronDown, Building2, Calendar, CheckCircle2, XCircle, Clock, Activity, Coffee, History, XCircle2
+  ChevronDown, Calendar, CheckCircle2, XCircle, Clock, 
+  History, ShieldAlert
 } from "lucide-react";
 
 // ─── HELPERS ───────────────────────────────────────────────────────────────
@@ -148,10 +150,8 @@ function DailyPunchSummary({ dayData, date }) {
 }
 
 // ─── MAIN DASHBOARD ────────────────────────────────────────────────────────
-function AttendanceLedgerContent() {
-  const searchParams = useSearchParams();
-  const branch_id = searchParams.get("branch_id");
-
+export default function ManagerAttendanceLedger() {
+  const router = useRouter();
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("ledger"); 
@@ -171,25 +171,35 @@ function AttendanceLedgerContent() {
 
   useEffect(() => {
     const raw = localStorage.getItem("caketown_session");
-    if (!raw) return;
-    try { setSession(JSON.parse(raw)); } catch {}
-  }, []);
+    if (!raw) { router.push("/"); return; }
+    
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed.role !== "manager" || !canRead(parsed.feature_permissions, 'view_attendance_history')) {
+        router.push("/manager/dashboard");
+        return;
+      }
+      setSession(parsed);
+    } catch {
+      router.push("/");
+    }
+  }, [router]);
 
   const loadAttendance = useCallback(async () => {
-    if (!branch_id) return;
+    if (!session?.branch_id) return;
     setLoading(true);
-    const res = await callApi("get_monthly_attendance", { branch_id, month: finMonth, year: finYear });
+    const res = await callApi("get_monthly_attendance", { branch_id: session.branch_id, month: finMonth, year: finYear });
     if (res.status === "success") setAttendanceGrid(res.data);
     setLoading(false);
-  }, [branch_id, finMonth, finYear]);
+  }, [session?.branch_id, finMonth, finYear]);
 
   const loadLeaveRequests = useCallback(async () => {
-    if (!branch_id) return;
+    if (!session?.branch_id) return;
     setLeaveLoading(true);
-    const res = await callApi("get_leave_applications", { branch_id, status: 'all' });
+    const res = await callApi("get_leave_applications", { branch_id: session.branch_id, status: 'all' });
     if (res.status === "success") setLeaveRequests(res.data || []);
     setLeaveLoading(false);
-  }, [branch_id]);
+  }, [session?.branch_id]);
 
   useEffect(() => { 
     if (activeTab === "ledger") loadAttendance(); 
@@ -231,11 +241,16 @@ function AttendanceLedgerContent() {
     }
   };
 
+  if (!session) return null;
+
+  // ─── GATEKEEPER: WRITE ACCESS ───
+  const canEdit = canWrite(session.feature_permissions, 'edit_attendance');
+
   return (
     <div className="flex flex-col gap-6 md:gap-8 animate-in fade-in duration-500 pb-24 text-gray-900 dark:text-neutral-200 w-full min-w-0 max-w-full">
       
       {/* ── HEADER ──────────────────────────────────────────────────────── */}
-      <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 bg-white/60 dark:bg-neutral-900/40 p-5 md:p-6 rounded-3xl backdrop-blur-xl border border-gray-200/60 dark:border-neutral-800/60 shadow-sm w-full min-w-0">
+      <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 bg-white/60 dark:bg-neutral-900/40 p-5 md:p-6 rounded-3xl backdrop-blur-xl border border-gray-200/60 dark:border-neutral-800/60 shadow-sm w-full min-w-0 mt-3 md:mt-0">
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-blue-600 dark:text-blue-500 mb-1">
             <CalendarDays size={14} className="shrink-0" />
@@ -245,21 +260,30 @@ function AttendanceLedgerContent() {
             Attendance Ledger
           </h1>
           <p className="text-sm text-gray-500 dark:text-neutral-400 mt-1.5 font-medium truncate">
-            Manage monthly duty grids, manual overrides, and staff leave applications.
+            Manage monthly duty grids, manual overrides, and staff leave applications for {session.branch_name}.
           </p>
         </div>
 
-        {/* Tab Switcher */}
-        <div className="flex items-center bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-2xl p-1.5 shadow-sm shrink-0 overflow-x-auto">
-          <button onClick={() => setActiveTab("ledger")} className={`px-5 py-2.5 rounded-xl text-sm font-black transition-all whitespace-nowrap ${activeTab === 'ledger' ? 'bg-gray-100 dark:bg-neutral-900 text-gray-900 dark:text-white' : 'text-gray-500 hover:text-gray-900 dark:hover:text-white'}`}>
-            Duty Ledger
-          </button>
-          <button onClick={() => setActiveTab("requests")} className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-black transition-all whitespace-nowrap ${activeTab === 'requests' ? 'bg-gray-100 dark:bg-neutral-900 text-gray-900 dark:text-white' : 'text-gray-500 hover:text-gray-900 dark:hover:text-white'}`}>
-            Leave Requests 
-            {leaveRequests.filter(l => l.status === 'pending').length > 0 && (
-              <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
-            )}
-          </button>
+        <div className="flex items-center gap-3">
+          {/* Read-Only Badge */}
+          {!canEdit && (
+            <div className="hidden md:flex bg-yellow-50 dark:bg-yellow-500/10 px-4 py-2.5 rounded-xl border border-yellow-200 dark:border-yellow-900/50 items-center gap-2 text-yellow-700 dark:text-yellow-500 text-xs font-bold shrink-0">
+               <ShieldAlert size={16}/> Read-Only Mode
+            </div>
+          )}
+
+          {/* Tab Switcher */}
+          <div className="flex items-center bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-2xl p-1.5 shadow-sm shrink-0 overflow-x-auto">
+            <button onClick={() => setActiveTab("ledger")} className={`px-5 py-2.5 rounded-xl text-sm font-black transition-all whitespace-nowrap ${activeTab === 'ledger' ? 'bg-gray-100 dark:bg-neutral-900 text-gray-900 dark:text-white' : 'text-gray-500 hover:text-gray-900 dark:hover:text-white'}`}>
+              Duty Ledger
+            </button>
+            <button onClick={() => setActiveTab("requests")} className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-black transition-all whitespace-nowrap ${activeTab === 'requests' ? 'bg-gray-100 dark:bg-neutral-900 text-gray-900 dark:text-white' : 'text-gray-500 hover:text-gray-900 dark:hover:text-white'}`}>
+              Leave Requests 
+              {leaveRequests.filter(l => l.status === 'pending').length > 0 && (
+                <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
+              )}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -337,7 +361,7 @@ function AttendanceLedgerContent() {
                               const dateStr = `${finYear}-${pad(finMonth)}-${pad(i + 1)}`;
                               let status = row.days?.[dateStr]?.status || row.days?.[dateStr] || "-";
                               
-                              if (status !== "-" && status !== "WO" && dateStr > todayStr && !row.days?.[dateStr]?.override) {
+                              if (status !== "-" && dateStr > todayStr && !row.days?.[dateStr]?.override) {
                                  status = "-"; 
                               }
                               
@@ -350,11 +374,12 @@ function AttendanceLedgerContent() {
                                 <td 
                                   key={i} 
                                   onClick={() => {
+                                    if (!canEdit) return; // Block clicks if Read-Only
                                     const dayData = row.days?.[dateStr] || null;
                                     setOverrideTarget({ user: row, date: dateStr, dayData });
                                     setOverrideForm({ status: status === "F" || status === "P" ? "F" : (status === "-" ? "L" : status), reason: "" }); 
                                   }}
-                                  className="p-1 text-center border-r border-gray-100 dark:border-neutral-900 transition-colors cursor-pointer hover:bg-blue-50 dark:hover:bg-blue-900/20"
+                                  className={`p-1 text-center border-r border-gray-100 dark:border-neutral-900 transition-colors ${canEdit ? 'cursor-pointer hover:bg-blue-50 dark:hover:bg-blue-900/20' : 'cursor-default'}`}
                                 >
                                   <AttendanceMarker status={status} />
                                 </td>
@@ -433,7 +458,7 @@ function AttendanceLedgerContent() {
                        </div>
                      </div>
 
-                     {req.status === 'pending' && (
+                     {req.status === 'pending' && canEdit && (
                        <div className="flex gap-3 pt-2">
                          <button onClick={() => handleLeaveAction(req.id, 'rejected')} className="flex-1 py-3 bg-red-50 hover:bg-red-100 dark:bg-red-500/10 dark:hover:bg-red-500/20 text-red-600 dark:text-red-400 text-xs font-black rounded-xl transition-colors border border-red-200 dark:border-red-900/50 flex items-center justify-center gap-2">
                            <XCircle size={16}/> Reject
@@ -462,7 +487,7 @@ function AttendanceLedgerContent() {
       {/* ══════════════════════════════════════════════════════════════════
           MODAL: OVERRIDE STATUS (FIXED TO RIGHT SIDE)
       ══════════════════════════════════════════════════════════════════ */}
-      {overrideTarget && (
+      {overrideTarget && canEdit && (
         <div className="fixed inset-y-0 right-0 left-0 md:left-72 bg-black/60 dark:bg-black/80 backdrop-blur-sm z-[150] flex items-center justify-center p-4 shadow-[-10px_0_40px_rgba(0,0,0,0.2)]">
           <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 w-full max-w-xl max-h-[90vh] rounded-3xl shadow-2xl animate-in zoom-in-95 duration-200 flex flex-col overflow-hidden">
             
@@ -520,13 +545,5 @@ function AttendanceLedgerContent() {
       )}
 
     </div>
-  );
-}
-
-export default function AttendanceLedgerPage() {
-  return (
-    <Suspense fallback={<div className="flex justify-center items-center h-screen"><span className="animate-pulse font-bold text-gray-500">Loading Ledger...</span></div>}>
-      <AttendanceLedgerContent />
-    </Suspense>
   );
 }

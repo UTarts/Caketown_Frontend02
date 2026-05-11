@@ -4,7 +4,12 @@ import { ToastProvider } from "@/components/ui/Toast";
 
 export const metadata = {
   title: "Caketown ERP",
-  description: "Enterprise Attendance & Payroll Management",
+  description: "Enterprise Management System",
+  manifest: "/manifest.json",
+};
+
+export const viewport = {
+  themeColor: "#3b82f6",
 };
 
 export default function RootLayout({ children }) {

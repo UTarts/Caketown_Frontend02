@@ -1,63 +1,58 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { callApi, logout } from "@/lib/apiClient";
 import {
-  Banknote, CalendarDays, Clock3, FileText, Loader2, UserCircle2,
-  CheckCircle2, XCircle, LayoutDashboard, History, Download, LogOut, 
-  Activity, Sparkles, MapPin, Sun, Moon
+  Banknote, CalendarDays, Loader2, CheckCircle2, 
+  LayoutDashboard, History, Download, LogOut, 
+  Activity, Wallet, Coffee, ChevronRight, AlertTriangle, 
+  Sun, Moon, X, Plus, Calendar, ShieldCheck, Clock, FileText
 } from "lucide-react";
 
-// ─── HELPERS ───────────────────────────────────────────────────────────────
-const pad = (n) => String(n).padStart(2, "0");
+// --- HELPERS ---
+const formatCurrency = (val) => `₹${parseFloat(val || 0).toLocaleString("en-IN")}`;
 
-function formatDuration(minutes) {
-  if (!minutes || minutes <= 0) return "0h 0m";
-  const h = Math.floor(minutes / 60);
-  const m = Math.floor(minutes % 60);
-  return `${h}h ${m}m`;
-}
-
-function AttendanceMarker({ status }) {
-  const map = {
-    F:  { label: "P",  bg: "bg-emerald-100 dark:bg-emerald-500/20", text: "text-emerald-700 dark:text-emerald-400" },
-    P:  { label: "P",  bg: "bg-emerald-100 dark:bg-emerald-500/20", text: "text-emerald-700 dark:text-emerald-400" },
-    H:  { label: "H",  bg: "bg-yellow-100 dark:bg-yellow-500/20",   text: "text-yellow-700 dark:text-yellow-400" },
-    A:  { label: "A",  bg: "bg-red-100 dark:bg-red-500/20",         text: "text-red-700 dark:text-red-400" },
-    "-":{ label: "–",  bg: "bg-transparent",                        text: "text-gray-300 dark:text-neutral-700" },
-  };
-  const m = map[status] || map["-"];
-  return <span className={`inline-flex items-center justify-center w-8 h-8 rounded-xl text-xs font-black transition-colors ${m.bg} ${m.text}`}>{m.label}</span>;
-}
-
-// ─── MAIN PORTAL ───────────────────────────────────────────────────────────
 export default function StaffPortalPage() {
   const router = useRouter();
-
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
+  
+  // Navigation State
   const [activeTab, setActiveTab] = useState("home");
   const [dark, setDark] = useState(false);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const profileMenuRef = useRef(null);
 
   // Data States
   const [profile, setProfile] = useState(null);
   const [attendance, setAttendance] = useState([]);
   const [finance, setFinance] = useState(null);
+  const [paystubs, setPaystubs] = useState([]);
+  const [leaves, setLeaves] = useState([]);
   
-  // Date Scopes
+  // Scopes
   const now = new Date();
   const [selMonth, setSelMonth] = useState(now.getMonth() + 1);
   const [selYear, setSelYear] = useState(now.getFullYear());
   const [downloadingId, setDownloadingId] = useState(false);
 
-  // Theme Init
+  // Leave Form Modal
+  const [showLeaveForm, setShowLeaveForm] = useState(false);
+  const [leaveForm, setLeaveForm] = useState({ start_date: "", end_date: "", reason: "" });
+  const [leaveSubmitting, setLeaveSubmitting] = useState(false);
+
   useEffect(() => {
     const saved = localStorage.getItem("theme");
-    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-    const isDark = saved ? saved === "dark" : prefersDark;
+    const isDark = saved ? saved === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
     setDark(isDark);
     document.documentElement.classList.toggle("dark", isDark);
+
+    const handleClickOutside = (e) => {
+      if (profileMenuRef.current && !profileMenuRef.current.contains(e.target)) setProfileMenuOpen(false);
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
   const toggleTheme = () => {
@@ -67,7 +62,8 @@ export default function StaffPortalPage() {
     localStorage.setItem("theme", next ? "dark" : "light");
   };
 
-  // Auth Init
+  const handleLogout = () => logout(router);
+
   useEffect(() => {
     try {
       const raw = localStorage.getItem("caketown_session");
@@ -76,9 +72,7 @@ export default function StaffPortalPage() {
         router.push("/"); return;
       }
       setSession(parsed);
-    } catch {
-      router.push("/");
-    }
+    } catch { router.push("/"); }
   }, [router]);
 
   const fetchPortalData = useCallback(async () => {
@@ -86,15 +80,23 @@ export default function StaffPortalPage() {
     setLoading(true);
 
     try {
-      const [profRes, attRes, finRes] = await Promise.all([
+      const [profRes, attRes, finRes, leavesRes] = await Promise.all([
         callApi("get_my_profile", { user_id: session.id }),
         callApi("get_my_attendance", { user_id: session.id, month: selMonth, year: selYear }),
-        callApi("get_my_financials", { user_id: session.id, month: selMonth, year: selYear })
+        callApi("get_my_financials", { user_id: session.id, month: selMonth, year: selYear }),
+        callApi("get_leave_applications", { branch_id: session.branch_id, status: 'all' })
       ]);
 
       if (profRes.status === "success") setProfile(profRes.data);
       if (attRes.status === "success") setAttendance(attRes.data || []);
-      if (finRes.status === "success") setFinance(finRes.data);
+      if (finRes.status === "success") {
+        setFinance(finRes.data);
+        setPaystubs(finRes.data.payroll_history || []);
+      }
+      if (leavesRes.status === "success") {
+        const myLeaves = (leavesRes.data || []).filter(l => String(l.user_id) === String(session.id));
+        setLeaves(myLeaves);
+      }
     } catch (err) {
       console.error("Portal sync error:", err);
     } finally {
@@ -102,395 +104,381 @@ export default function StaffPortalPage() {
     }
   }, [session, selMonth, selYear]);
 
-  useEffect(() => {
-    fetchPortalData();
-  }, [fetchPortalData]);
+  useEffect(() => { fetchPortalData(); }, [fetchPortalData]);
 
-  const handleDownloadSlip = async () => {
+  const handleDownloadSlip = async (stub) => {
     setDownloadingId(true);
-    const res = await callApi("download_salary_slip", { user_id: session.id, month: selMonth, year: selYear });
+    const res = await callApi("download_salary_slip", { user_id: session.id, month: stub.payroll_month, year: stub.payroll_year });
     if (res.status === "success" && res.url) window.open(res.url, "_blank");
-    else alert(res.message || "Failed to generate salary slip PDF.");
+    else alert(res.message || "Failed to generate salary slip.");
     setDownloadingId(false);
   };
 
-  if (!session || loading && !profile) {
+  const handleApplyLeave = async (e) => {
+    e.preventDefault();
+    setLeaveSubmitting(true);
+    const res = await callApi("apply_leave", {
+      user_id: session.id,
+      branch_id: session.branch_id,
+      start_date: leaveForm.start_date,
+      end_date: leaveForm.end_date,
+      reason: leaveForm.reason
+    });
+    setLeaveSubmitting(false);
+
+    if (res.status === "success") {
+      setLeaveForm({ start_date: "", end_date: "", reason: "" });
+      setShowLeaveForm(false);
+      fetchPortalData(); // Refresh leaves list
+    } else {
+      alert(res.message || "Failed to submit leave application.");
+    }
+  };
+
+  if (!session || (loading && !profile)) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 dark:bg-[#050505]">
-        <Loader2 className="animate-spin text-emerald-500 mb-4" size={48} strokeWidth={2} />
-        <p className="text-sm font-bold text-gray-500 uppercase tracking-widest animate-pulse">Loading Workspace...</p>
+      <div className="min-h-[100dvh] flex flex-col items-center justify-center bg-gray-50 dark:bg-[#050505]">
+        <Loader2 className="animate-spin text-blue-500 mb-4" size={48} strokeWidth={2} />
+        <p className="text-sm font-bold text-gray-500 uppercase tracking-widest animate-pulse">Loading App...</p>
       </div>
     );
   }
 
   const navItems = [
-    { id: "home", label: "Dashboard", icon: LayoutDashboard },
-    { id: "attendance", label: "Attendance", icon: CalendarDays },
-    { id: "finance", label: "Finance", icon: Banknote },
-    { id: "profile", label: "Profile", icon: UserCircle2 },
+    { id: "home", label: "Overview", icon: LayoutDashboard },
+    { id: "attendance", label: "Duty Logs", icon: CalendarDays },
+    { id: "finance", label: "Finances", icon: Wallet },
+    { id: "leave", label: "Leaves", icon: Coffee },
   ];
 
   const initials = profile?.name?.split(" ").map(n => n[0]).join("").substring(0, 2).toUpperCase() || "S";
+  const advancesTaken = finance ? (parseFloat(finance.summary?.pre_advance || 0) + parseFloat(finance.summary?.final_advance || 0) + parseFloat(finance.summary?.shop_advance || 0)) : 0;
+  const finesTaken = finance ? (parseFloat(finance.summary?.fine || 0) + parseFloat(finance.summary?.other || 0)) : 0;
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-[#050505] text-gray-900 dark:text-neutral-200 font-sans pb-24 md:pb-10 selection:bg-emerald-500 selection:text-white">
+    <div className="min-h-[100dvh] bg-gray-50 dark:bg-[#050505] text-gray-900 dark:text-neutral-200">
       
-      {/* ── MOBILE TOP HEADER (With Diagonal Logo) ─────────────────────── */}
-      <div className="md:hidden fixed top-0 left-0 right-0 z-40 bg-white/80 dark:bg-black/80 backdrop-blur-xl border-b border-gray-200 dark:border-neutral-800 h-16 flex items-center justify-between shadow-sm">
-        {/* White Diagonal Logo Container */}
-        <div className="absolute top-0 left-0 h-16 w-40 bg-white shadow-[2px_0_10px_rgba(0,0,0,0.1)] z-10" style={{ clipPath: 'polygon(0 0, 100% 0, 85% 100%, 0 100%)' }}>
-          {/* REPLACE SRC WITH YOUR LOGO PATH */}
-          <img src="/logo.png" alt="Caketown" className="w-full h-full object-contain p-2 pr-6" />
+      {/* ── UNIFIED APP HEADER ── */}
+      <div className="fixed top-0 left-0 right-0 z-40 bg-white/80 dark:bg-[#0a0a0a]/80 backdrop-blur-xl border-b border-gray-200/60 dark:border-neutral-800/60 h-16 flex items-center justify-between shadow-sm px-4">
+        {/* Logo */}
+        <div className="absolute top-0 left-0 h-16 w-40 bg-white shadow-[2px_0_10px_rgba(0,0,0,0.1)] z-10 flex flex-col justify-center px-4" style={{ clipPath: 'polygon(0 0, 100% 0, 85% 100%, 0 100%)' }}>
+          <img src="/logo.png" alt="Caketown" className="h-6 w-auto object-contain object-left" onError={(e) => { e.target.style.display='none'; }} />
+          <span className="text-[8px] text-blue-600 font-black uppercase tracking-widest mt-0.5">Staff Portal</span>
         </div>
-        
-        <div className="flex-1"></div> {/* Spacer */}
-        
-        <button onClick={toggleTheme} className="p-2.5 mr-4 rounded-full bg-gray-100 dark:bg-neutral-900 text-gray-600 dark:text-neutral-300 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors z-20">
-          {dark ? <Sun size={18} /> : <Moon size={18} />}
-        </button>
+
+        {/* Desktop Tabs (Hidden on Mobile) */}
+        <div className="hidden md:flex flex-1 items-center justify-center gap-2 pl-40">
+           {navItems.map(item => (
+             <button key={item.id} onClick={() => setActiveTab(item.id)} className={`px-4 py-2 rounded-xl text-sm font-black transition-all flex items-center gap-2 ${activeTab === item.id ? 'bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400' : 'text-gray-500 hover:text-gray-900 dark:hover:text-white'}`}>
+               <item.icon size={16} /> {item.label}
+             </button>
+           ))}
+        </div>
+
+        <div className="flex-1 md:hidden"></div>
+
+        {/* Profile Menu Trigger */}
+        <div className="relative z-20" ref={profileMenuRef}>
+           <button onClick={() => setProfileMenuOpen(!profileMenuOpen)} className="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400 flex items-center justify-center font-black text-xs border border-blue-200 dark:border-blue-800 shadow-sm active:scale-95 transition-all">
+             {initials}
+           </button>
+           
+           {profileMenuOpen && (
+             <div className="absolute top-[120%] right-0 w-56 bg-white dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-2xl shadow-xl p-2 animate-in fade-in slide-in-from-top-2 duration-200 z-50">
+               <div className="px-3 py-2 mb-2 border-b border-gray-100 dark:border-neutral-900">
+                 <p className="text-sm font-black text-gray-900 dark:text-white truncate">{profile.name}</p>
+                 <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest truncate">{profile.branch_name}</p>
+               </div>
+               <button onClick={toggleTheme} className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-bold text-gray-700 dark:text-neutral-300 hover:bg-gray-50 dark:hover:bg-neutral-900 transition-colors">
+                 {dark ? <Sun size={16} /> : <Moon size={16} />} {dark ? "Light Mode" : "Dark Mode"}
+               </button>
+               <button onClick={handleLogout} className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-bold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors mt-1">
+                 <LogOut size={16} /> Secure Logout
+               </button>
+             </div>
+           )}
+        </div>
       </div>
 
-      {/* ── DESKTOP TOP NAV (With Diagonal Logo) ───────────────────────── */}
-      <nav className="hidden md:flex sticky top-0 z-50 bg-white/80 dark:bg-[#0a0a0a]/80 backdrop-blur-xl border-b border-gray-200 dark:border-neutral-800 h-20 items-center justify-between pl-0 pr-8">
+      {/* ── MAIN CONTENT AREA ── */}
+      <main className="pt-20 pb-28 md:pb-10 max-w-3xl mx-auto px-4 md:px-8 h-full">
         
-        {/* White Diagonal Logo Container */}
-        <div className="h-20 w-64 bg-white shadow-[2px_0_15px_rgba(0,0,0,0.05)] relative z-10" style={{ clipPath: 'polygon(0 0, 100% 0, 85% 100%, 0 100%)' }}>
-           {/* REPLACE SRC WITH YOUR LOGO PATH */}
-           <img src="/logo.png" alt="Caketown" className="w-full h-full object-contain p-3 pr-8" />
-        </div>
-
-        <div className="flex gap-2">
-          {navItems.map(item => (
-            <button key={item.id} onClick={() => setActiveTab(item.id)} className={`px-5 py-2.5 rounded-xl text-sm font-black transition-all ${activeTab === item.id ? 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-neutral-900'}`}>
-              <span className="flex items-center gap-2"><item.icon size={16} /> {item.label}</span>
-            </button>
-          ))}
-          <button onClick={toggleTheme} className="ml-4 p-2.5 rounded-xl bg-gray-100 dark:bg-neutral-900 text-gray-600 dark:text-neutral-300 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors">
-            {dark ? <Sun size={18} /> : <Moon size={18} />}
-          </button>
-        </div>
-      </nav>
-
-      {/* ── MAIN CONTENT AREA ──────────────────────────────────────────── */}
-      <main className="max-w-[1200px] mx-auto p-4 md:p-8 pt-20 md:pt-8 animate-in fade-in duration-500">
-
-        {/* ═══════════════════════════════════════════════════════════════
-            TAB: HOME / DASHBOARD
-        ═══════════════════════════════════════════════════════════════ */}
+        {/* ── TAB: OVERVIEW ── */}
         {activeTab === "home" && (
-          <div className="space-y-6 md:space-y-8 animate-in slide-in-from-bottom-4 duration-500">
-            {/* HERO SECTION */}
-            <div className="relative bg-white/60 dark:bg-[#0a0a0a]/60 backdrop-blur-2xl border border-gray-200/60 dark:border-neutral-800/60 rounded-[2rem] p-6 md:p-10 shadow-sm overflow-hidden flex flex-col md:flex-row md:items-center justify-between gap-6">
-              <div className="absolute top-0 right-0 w-64 h-64 bg-emerald-500/10 rounded-full blur-3xl -mr-20 -mt-20 pointer-events-none"></div>
-              
-              <div className="flex items-center gap-5 relative z-10">
-                <div className="w-20 h-20 md:w-24 md:h-24 rounded-[2rem] bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 flex items-center justify-center text-3xl font-black shadow-lg shadow-emerald-500/10 border-2 border-white dark:border-neutral-800 shrink-0">
-                  {initials}
-                </div>
-                <div>
-                  <div className="flex items-center gap-2 mb-1">
-                    <Sparkles size={14} className="text-emerald-500" />
-                    <span className="text-[10px] md:text-xs font-black tracking-[0.2em] uppercase text-emerald-600 dark:text-emerald-500">Welcome Back</span>
-                  </div>
-                  <h1 className="text-2xl md:text-4xl font-black text-gray-900 dark:text-white tracking-tight mb-2">
-                    {profile?.name}
-                  </h1>
-                  <span className="px-3 py-1 bg-gray-100 dark:bg-neutral-900 text-gray-600 dark:text-neutral-400 text-xs font-bold rounded-lg uppercase tracking-wider inline-flex items-center gap-1.5">
-                    <MapPin size={12} /> {profile?.branch_name || "Unassigned"}
-                  </span>
-                </div>
+          <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4">
+            <div className="bg-gradient-to-br from-blue-600 to-blue-500 rounded-[2rem] p-6 md:p-8 text-white shadow-lg shadow-blue-500/20 relative overflow-hidden">
+              <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full blur-3xl -mr-20 -mt-20 pointer-events-none"></div>
+              <div className="relative z-10">
+                <div className="w-16 h-16 rounded-2xl bg-white/20 backdrop-blur-sm border border-white/30 flex items-center justify-center text-2xl font-black mb-4 shadow-sm">{initials}</div>
+                <p className="text-blue-100 font-bold text-xs uppercase tracking-widest mb-1">Welcome Back,</p>
+                <h2 className="text-3xl font-black tracking-tight">{profile.name}</h2>
+                <p className="text-sm font-medium text-blue-100 mt-1.5 flex items-center gap-2 opacity-90"><Activity size={14}/> {profile.department} • {profile.branch_name}</p>
               </div>
             </div>
 
-            {/* QUICK STATS */}
-            <h2 className="text-xs font-black text-gray-400 uppercase tracking-widest px-2 mt-8 mb-4">Current Month Snapshot</h2>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-3xl p-5 shadow-sm">
-                <div className="flex items-center justify-between mb-3">
-                  <p className="text-[10px] uppercase tracking-widest font-black text-gray-400">Total Duty</p>
-                  <Activity size={16} className="text-emerald-500" />
-                </div>
-                <p className="text-3xl font-black text-gray-900 dark:text-white tabular-nums">{finance?.present || 0}</p>
+            <div className="grid grid-cols-2 gap-4">
+               <div className="bg-white dark:bg-[#0a0a0a] rounded-3xl p-5 border border-gray-200 dark:border-neutral-800 shadow-sm flex flex-col justify-center">
+                 <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 pl-1">Fixed Salary</p>
+                 <p className="font-mono font-black text-2xl text-blue-600 dark:text-blue-400 pl-1">{formatCurrency(profile.monthly_fixed_salary)}</p>
+               </div>
+               <div className="bg-white dark:bg-[#0a0a0a] rounded-3xl p-5 border border-gray-200 dark:border-neutral-800 shadow-sm flex flex-col justify-center">
+                 <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 pl-1">Face ID Vector</p>
+                 {profile.face_registered ? (
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 rounded-xl font-black text-[10px] uppercase tracking-widest border border-emerald-200 dark:border-emerald-900/50 w-fit"><CheckCircle2 size={14}/> Registered</span>
+                 ) : (
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-400 rounded-xl font-black text-[10px] uppercase tracking-widest border border-red-200 dark:border-red-900/50 w-fit"><AlertTriangle size={14}/> Missing</span>
+                 )}
+               </div>
+            </div>
+            
+            {/* Quick Stats */}
+            <div className="bg-white dark:bg-[#0a0a0a] rounded-3xl p-5 border border-gray-200 dark:border-neutral-800 shadow-sm">
+              <h3 className="text-xs font-black uppercase tracking-widest text-gray-400 mb-4 flex items-center gap-2 pl-1"><Calendar size={14} className="text-blue-500" /> Current Month Pulse</h3>
+              <div className="flex gap-4 p-4 bg-gray-50 dark:bg-[#111] border border-gray-100 dark:border-neutral-800 rounded-2xl">
+                 <div>
+                   <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1">Present</p>
+                   <p className="font-mono font-black text-xl text-gray-900 dark:text-white">{attendance.filter(a => a.status === 'F' || a.status === 'H').length} Days</p>
+                 </div>
+                 <div className="border-l border-gray-200 dark:border-neutral-800 pl-4">
+                   <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1">Absent</p>
+                   <p className="font-mono font-black text-xl text-red-500">{attendance.filter(a => a.status === 'A').length} Days</p>
+                 </div>
               </div>
-              <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-3xl p-5 shadow-sm">
-                <div className="flex items-center justify-between mb-3">
-                  <p className="text-[10px] uppercase tracking-widest font-black text-gray-400">Paid Leaves</p>
-                  <CalendarDays size={16} className="text-blue-500" />
-                </div>
-                <p className="text-3xl font-black text-blue-600 dark:text-blue-400 tabular-nums">{finance?.paid_leaves || 0}</p>
-              </div>
-              <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-3xl p-5 shadow-sm">
-                <div className="flex items-center justify-between mb-3">
-                  <p className="text-[10px] uppercase tracking-widest font-black text-gray-400">Advances</p>
-                  <Clock3 size={16} className="text-orange-500" />
-                </div>
-                <p className="text-2xl font-black text-orange-600 dark:text-orange-400 tabular-nums">₹{parseFloat(finance?.total_advance || 0).toLocaleString("en-IN")}</p>
-              </div>
-              <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-3xl p-5 shadow-sm">
-                <div className="flex items-center justify-between mb-3">
-                  <p className="text-[10px] uppercase tracking-widest font-black text-gray-400">Net Payable</p>
-                  <Banknote size={16} className="text-emerald-500" />
-                </div>
-                <p className="text-2xl font-black text-emerald-600 dark:text-emerald-400 tabular-nums">₹{parseFloat(finance?.salary_to_pay || 0).toLocaleString("en-IN")}</p>
-              </div>
+              <button onClick={() => setActiveTab("attendance")} className="w-full mt-3 py-3 bg-blue-50 hover:bg-blue-100 dark:bg-blue-500/10 dark:hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 text-xs font-black uppercase tracking-widest rounded-xl transition-all border border-blue-100 dark:border-blue-900/50 flex items-center justify-center gap-2">
+                Open Duty Ledger <ChevronRight size={14} />
+              </button>
             </div>
           </div>
         )}
 
-        {/* ═══════════════════════════════════════════════════════════════
-            TAB: ATTENDANCE HISTORY
-        ═══════════════════════════════════════════════════════════════ */}
+        {/* ── TAB: ATTENDANCE ── */}
         {activeTab === "attendance" && (
-          <div className="space-y-6 animate-in slide-in-from-bottom-4 duration-500">
-            <div className="flex flex-wrap gap-2.5 items-center bg-white dark:bg-[#0a0a0a] p-2.5 rounded-2xl border border-gray-200 dark:border-neutral-800 shadow-sm w-fit">
-              <div className="flex items-center gap-2 bg-gray-50 dark:bg-neutral-900 rounded-xl px-3 py-2">
-                <CalendarDays size={14} className="text-emerald-500" />
-                <select value={selMonth} onChange={e => setSelMonth(parseInt(e.target.value))} className="bg-transparent text-xs font-black text-gray-900 dark:text-white outline-none cursor-pointer">
-                  {[...Array(12)].map((_, i) => <option key={i + 1} value={i + 1}>{new Date(0, i).toLocaleString("en-IN", { month: "long" })}</option>)}
-                </select>
-              </div>
-              <select value={selYear} onChange={e => setSelYear(parseInt(e.target.value))} className="bg-gray-50 dark:bg-neutral-900 rounded-xl px-3 py-2 text-xs font-black text-gray-900 dark:text-white outline-none cursor-pointer">
+          <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4">
+            <div className="flex items-center gap-2 bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-xl px-4 py-3 w-fit shadow-sm">
+              <Calendar size={16} className="text-blue-500" />
+              <select value={selMonth} onChange={(e) => setSelMonth(parseInt(e.target.value))} className="bg-transparent text-sm font-black text-gray-900 dark:text-white outline-none cursor-pointer">
+                {[...Array(12)].map((_, i) => <option key={i + 1} value={i + 1}>{new Date(0, i).toLocaleString("en-IN", { month: "long" })}</option>)}
+              </select>
+              <select value={selYear} onChange={(e) => setSelYear(parseInt(e.target.value))} className="bg-transparent text-sm font-black text-gray-900 dark:text-white outline-none cursor-pointer border-l border-gray-200 dark:border-neutral-700 pl-2 ml-2">
                 {[2024, 2025, 2026, 2027].map(y => <option key={y} value={y}>{y}</option>)}
               </select>
-              <button onClick={fetchPortalData} className="px-4 py-2 bg-gray-900 dark:bg-white text-white dark:text-black text-xs font-black rounded-xl hover:bg-gray-800 active:scale-95 transition-all">Load</button>
             </div>
 
-            {loading ? (
-              <div className="flex justify-center py-24"><Loader2 className="animate-spin text-emerald-500" size={32} /></div>
-            ) : attendance.length === 0 ? (
-              <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-3xl p-16 text-center">
-                <CalendarDays size={40} className="text-gray-300 dark:text-neutral-700 mx-auto mb-4" />
-                <p className="text-base font-black text-gray-900 dark:text-white">No Records Found</p>
-                <p className="text-sm font-bold text-gray-500 mt-1">No attendance data for this month.</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {attendance.map((item, i) => {
-                  const d = new Date(item.work_date || item.date);
-                  return (
-                    <div key={i} className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-3xl p-5 shadow-sm hover:border-emerald-200 dark:hover:border-emerald-900/50 transition-colors">
-                      <div className="flex justify-between items-center mb-4 pb-4 border-b border-gray-100 dark:border-neutral-900">
-                        <div>
-                          <p className="font-black text-lg text-gray-900 dark:text-white">{pad(d.getDate())}</p>
-                          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{d.toLocaleDateString("en-IN", { month: "short", weekday: "long" })}</p>
+            <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-3xl shadow-sm overflow-hidden min-h-[400px]">
+              {attendance.length === 0 ? (
+                <div className="text-center py-20 text-gray-400 font-bold text-sm">No punches logged for this period.</div>
+              ) : (
+                <div className="divide-y divide-gray-100 dark:divide-neutral-900">
+                  {attendance.map((day, i) => (
+                    <div key={i} className="flex flex-col md:flex-row md:items-center justify-between p-4 md:p-5 hover:bg-gray-50/50 dark:hover:bg-neutral-900/30 transition-colors gap-3">
+                      <div className="flex items-center gap-3 md:gap-4">
+                        <div className="w-12 h-12 rounded-2xl bg-gray-50 dark:bg-[#111] border border-gray-100 dark:border-neutral-800 flex flex-col items-center justify-center shrink-0">
+                          <span className="text-[9px] font-black text-gray-400 uppercase">{new Date(day.date).toLocaleDateString("en-IN", { weekday: "short" })}</span>
+                          <span className="text-sm font-black text-gray-900 dark:text-white leading-none mt-0.5">{new Date(day.date).getDate()}</span>
                         </div>
-                        <AttendanceMarker status={item.status === "F" ? "P" : item.status} />
+                        <div>
+                          <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1">Status</p>
+                          {day.status === 'F' ? <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 rounded-lg text-[10px] font-black uppercase tracking-widest border border-emerald-200 dark:border-emerald-900/50"><CheckCircle2 size={12}/> Full Day</span> : 
+                           day.status === 'H' ? <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-yellow-50 dark:bg-yellow-500/10 text-yellow-700 dark:text-yellow-400 rounded-lg text-[10px] font-black uppercase tracking-widest border border-yellow-200 dark:border-yellow-900/50">Half Day</span> : 
+                           day.status === 'L' ? <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400 rounded-lg text-[10px] font-black uppercase tracking-widest border border-blue-200 dark:border-blue-900/50">On Leave</span> : 
+                           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-400 rounded-lg text-[10px] font-black uppercase tracking-widest border border-red-200 dark:border-red-900/50"><AlertTriangle size={12}/> Absent</span>}
+                        </div>
                       </div>
                       
-                      <div className="grid grid-cols-2 gap-y-4 gap-x-2 text-xs">
+                      <div className="grid grid-cols-2 md:flex items-center gap-3 md:gap-8 bg-gray-50 dark:bg-[#111] md:bg-transparent p-3 md:p-0 rounded-xl">
                         <div>
-                          <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mb-1">First In</p>
-                          <p className="font-mono font-black text-gray-900 dark:text-white">{item.first_in ? new Date(item.first_in).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) : "—"}</p>
+                          <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-0.5">First In</p>
+                          <p className="font-mono font-bold text-sm text-gray-900 dark:text-white">{day.first_in ? new Date(day.first_in).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) : "—"}</p>
                         </div>
                         <div>
-                          <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mb-1">Last Out</p>
-                          <p className="font-mono font-black text-gray-900 dark:text-white">{item.last_out ? new Date(item.last_out).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) : "—"}</p>
+                          <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-0.5">Last Out</p>
+                          <p className="font-mono font-bold text-sm text-gray-900 dark:text-white">{day.last_out ? new Date(day.last_out).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) : "—"}</p>
+                        </div>
+                        <div className="col-span-2 md:col-span-1 md:text-right border-t md:border-t-0 border-gray-200 dark:border-neutral-800 pt-2 md:pt-0">
+                          <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest mb-0.5">Total Duty</p>
+                          <p className="font-mono font-black text-sm text-blue-600 dark:text-blue-400">{day.hours_worked}h Logged</p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ── TAB: FINANCES ── */}
+        {activeTab === "finance" && (
+          <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4">
+            
+            <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-3xl p-5 shadow-sm h-fit">
+              <h3 className="text-xs font-black uppercase tracking-widest text-gray-400 mb-4 flex items-center gap-2 pl-1"><Wallet size={14} className="text-orange-500" /> Current Balances</h3>
+              <div className="flex flex-col md:flex-row gap-3 md:gap-4 p-4 bg-orange-50 dark:bg-orange-500/10 border border-orange-100 dark:border-orange-900/50 rounded-2xl">
+                 <div>
+                   <p className="text-[10px] font-bold text-orange-600/70 dark:text-orange-400/70 uppercase tracking-widest mb-1">Total Advances Taken</p>
+                   <p className="font-mono font-black text-2xl text-orange-600 dark:text-orange-400">{formatCurrency(advancesTaken)}</p>
+                 </div>
+                 <div className="md:border-l border-t md:border-t-0 border-orange-200 dark:border-orange-900/50 md:pl-4 pt-2 md:pt-0">
+                   <p className="text-[10px] font-bold text-red-600/70 dark:text-red-400/70 uppercase tracking-widest mb-1">Fines / Deductions</p>
+                   <p className="font-mono font-black text-2xl text-red-600 dark:text-red-400">{formatCurrency(finesTaken)}</p>
+                 </div>
+              </div>
+            </div>
+
+            <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-3xl p-5 shadow-sm h-fit">
+              <h3 className="text-xs font-black uppercase tracking-widest text-gray-400 mb-4 flex items-center gap-2 pl-1"><FileText size={14} className="text-blue-500" /> Historical Salary Slips</h3>
+              <div className="space-y-3">
+                {paystubs.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-10 opacity-50">
+                    <Banknote size={32} className="text-gray-400 mb-2" />
+                    <p className="text-sm font-bold text-gray-500">No salary slips generated yet.</p>
+                  </div>
+                ) : (
+                  paystubs.map((stub, i) => (
+                    <div key={i} className="flex items-center justify-between bg-gray-50 dark:bg-[#111] border border-gray-200 dark:border-neutral-800 p-4 rounded-2xl group">
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-blue-100 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 flex items-center justify-center font-black text-xs">
+                          {new Date(stub.payroll_year, stub.payroll_month - 1).toLocaleString("en-IN", { month: "short" })}
                         </div>
                         <div>
-                          <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mb-1">Work Time</p>
-                          <p className="font-mono font-black text-emerald-600 dark:text-emerald-400">{item.work_time ? formatDuration(item.work_time * 60) : "—"}</p>
+                          <p className="font-black text-sm text-gray-900 dark:text-white">{new Date(stub.payroll_year, stub.payroll_month - 1).toLocaleString("en-IN", { month: "long", year: "numeric" })}</p>
+                          <p className="text-[10px] font-bold text-emerald-600 dark:text-emerald-500 uppercase tracking-widest mt-0.5 flex items-center gap-1"><CheckCircle2 size={10}/> Cleared • {formatCurrency(stub.paid_amount)}</p>
+                        </div>
+                      </div>
+                      <button onClick={() => handleDownloadSlip(stub)} disabled={downloadingId} className="w-10 h-10 flex items-center justify-center bg-white dark:bg-black border border-gray-200 dark:border-neutral-800 rounded-xl hover:text-blue-500 hover:border-blue-300 dark:hover:border-blue-900/50 transition-colors shadow-sm disabled:opacity-50">
+                         {downloadingId ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+          </div>
+        )}
+
+        {/* ── TAB: LEAVES ── */}
+        {activeTab === "leave" && (
+          <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4">
+            
+            <button 
+              onClick={() => setShowLeaveForm(true)}
+              className="w-full flex items-center justify-center gap-2 py-4 bg-blue-500 hover:bg-blue-600 text-white font-black rounded-2xl shadow-lg shadow-blue-500/20 transition-all active:scale-[0.98] uppercase tracking-wider"
+            >
+              <Plus size={18} strokeWidth={2.5}/> Apply For Leave
+            </button>
+
+            <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-3xl p-5 shadow-sm">
+              <h3 className="text-xs font-black uppercase tracking-widest text-gray-400 mb-4 flex items-center gap-2 pl-1"><Clock size={14} className="text-blue-500" /> My Application History</h3>
+              
+              <div className="space-y-4">
+                {leaves.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-10 opacity-50">
+                    <Coffee size={32} className="text-gray-400 mb-2" />
+                    <p className="text-sm font-bold text-gray-500">No leave applications found.</p>
+                  </div>
+                ) : (
+                  leaves.map((req) => (
+                    <div key={req.id} className={`border rounded-2xl p-4 relative overflow-hidden ${
+                      req.status === 'pending' ? 'bg-yellow-50/30 dark:bg-yellow-900/5 border-yellow-200 dark:border-yellow-900/50' : 
+                      req.status === 'approved' ? 'bg-emerald-50/30 dark:bg-emerald-900/5 border-emerald-200 dark:border-emerald-900/50' :
+                      'bg-red-50/30 dark:bg-red-900/5 border-red-200 dark:border-red-900/50'
+                    }`}>
+                      {req.status === 'pending' && <div className="absolute top-0 right-0 px-3 py-1 bg-yellow-100 text-yellow-700 dark:bg-yellow-500/20 dark:text-yellow-400 text-[9px] font-black uppercase tracking-widest rounded-bl-xl">Pending</div>}
+                      {req.status === 'approved' && <div className="absolute top-0 right-0 px-3 py-1 bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400 text-[9px] font-black uppercase tracking-widest rounded-bl-xl">Approved</div>}
+                      {req.status === 'rejected' && <div className="absolute top-0 right-0 px-3 py-1 bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-400 text-[9px] font-black uppercase tracking-widest rounded-bl-xl">Rejected</div>}
+                      
+                      <div className="grid grid-cols-2 gap-3 mb-3 pr-20">
+                        <div>
+                          <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-0.5">From Date</p>
+                          <p className="text-xs font-mono font-black text-gray-900 dark:text-white">{new Date(req.start_date).toLocaleDateString("en-IN", { day: 'numeric', month: 'short', year: 'numeric' })}</p>
                         </div>
                         <div>
-                          <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mb-1">Break Time</p>
-                          <p className="font-mono font-black text-yellow-600 dark:text-yellow-500">{item.break_time ? formatDuration(item.break_time * 60) : "0h 0m"}</p>
+                          <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-0.5">To Date</p>
+                          <p className="text-xs font-mono font-black text-gray-900 dark:text-white">{new Date(req.end_date).toLocaleDateString("en-IN", { day: 'numeric', month: 'short', year: 'numeric' })}</p>
                         </div>
                       </div>
 
-                      {item.remark && (
-                        <div className="mt-4 pt-3 border-t border-gray-100 dark:border-neutral-900">
-                          <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mb-1">Remark</p>
-                          <p className="text-xs font-medium text-gray-600 dark:text-neutral-400">{item.remark}</p>
+                      <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5">My Reason</p>
+                      <div className="bg-white dark:bg-black border border-gray-100 dark:border-neutral-800 p-3 rounded-xl text-xs font-medium text-gray-700 dark:text-neutral-300">
+                        {req.reason}
+                      </div>
+
+                      {req.admin_remarks && (
+                        <div className="mt-3 pt-3 border-t border-gray-200/50 dark:border-neutral-800/50">
+                          <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1 flex items-center gap-1"><ShieldCheck size={10}/> Manager Remarks</p>
+                          <p className="text-xs font-bold text-gray-600 dark:text-neutral-400 pl-1">{req.admin_remarks}</p>
                         </div>
                       )}
                     </div>
-                  );
-                })}
+                  ))
+                )}
               </div>
-            )}
-          </div>
-        )}
-
-        {/* ═══════════════════════════════════════════════════════════════
-            TAB: FINANCE LEDGER
-        ═══════════════════════════════════════════════════════════════ */}
-        {activeTab === "finance" && (
-          <div className="space-y-6 animate-in slide-in-from-bottom-4 duration-500">
-            <div className="flex flex-wrap gap-2.5 items-center bg-white dark:bg-[#0a0a0a] p-2.5 rounded-2xl border border-gray-200 dark:border-neutral-800 shadow-sm w-fit">
-              <div className="flex items-center gap-2 bg-gray-50 dark:bg-neutral-900 rounded-xl px-3 py-2">
-                <CalendarDays size={14} className="text-emerald-500" />
-                <select value={selMonth} onChange={e => setSelMonth(parseInt(e.target.value))} className="bg-transparent text-xs font-black text-gray-900 dark:text-white outline-none cursor-pointer">
-                  {[...Array(12)].map((_, i) => <option key={i + 1} value={i + 1}>{new Date(0, i).toLocaleString("en-IN", { month: "long" })}</option>)}
-                </select>
-              </div>
-              <select value={selYear} onChange={e => setSelYear(parseInt(e.target.value))} className="bg-gray-50 dark:bg-neutral-900 rounded-xl px-3 py-2 text-xs font-black text-gray-900 dark:text-white outline-none cursor-pointer">
-                {[2024, 2025, 2026, 2027].map(y => <option key={y} value={y}>{y}</option>)}
-              </select>
-              <button onClick={fetchPortalData} className="px-4 py-2 bg-gray-900 dark:bg-white text-white dark:text-black text-xs font-black rounded-xl hover:bg-gray-800 active:scale-95 transition-all">Load</button>
-            </div>
-
-            {loading ? (
-               <div className="flex justify-center py-24"><Loader2 className="animate-spin text-emerald-500" size={32} /></div>
-            ) : !finance ? (
-               <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-3xl p-16 text-center">
-                 <Banknote size={40} className="text-gray-300 dark:text-neutral-700 mx-auto mb-4" />
-                 <p className="text-base font-black text-gray-900 dark:text-white">No Financial Data</p>
-                 <p className="text-sm font-bold text-gray-500 mt-1">No payroll calculations exist for this month yet.</p>
-               </div>
-            ) : (
-              <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-                
-                {/* Paystub Card */}
-                <div className="xl:col-span-2 space-y-4">
-                  <h3 className="text-sm font-black text-gray-900 dark:text-white uppercase tracking-widest flex items-center gap-2 px-2">
-                    <FileText size={16} className="text-emerald-500" /> Salary Breakdown
-                  </h3>
-                  <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-3xl p-6 md:p-8 shadow-sm">
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-                      <div className="p-4 rounded-2xl bg-gray-50 dark:bg-[#111] border border-gray-100 dark:border-neutral-900">
-                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Fixed Base</p>
-                        <p className="font-mono font-black text-lg text-gray-900 dark:text-white">₹{parseFloat(finance.base_salary).toLocaleString("en-IN")}</p>
-                      </div>
-                      <div className="p-4 rounded-2xl bg-emerald-50/50 dark:bg-emerald-500/10 border border-emerald-100 dark:border-emerald-900/30">
-                        <p className="text-[10px] font-bold text-emerald-600/70 dark:text-emerald-400/70 uppercase tracking-widest mb-1">Duty Days</p>
-                        <p className="font-mono font-black text-emerald-700 dark:text-emerald-400 text-lg">{finance.present}</p>
-                      </div>
-                      <div className="p-4 rounded-2xl bg-blue-50/50 dark:bg-blue-500/10 border border-blue-100 dark:border-blue-900/30">
-                        <p className="text-[10px] font-bold text-blue-600/70 dark:text-blue-400/70 uppercase tracking-widest mb-1">Paid Leaves</p>
-                        <p className="font-mono font-black text-blue-700 dark:text-blue-400 text-lg">+{finance.paid_leaves}</p>
-                      </div>
-                      <div className="p-4 rounded-2xl bg-red-50/50 dark:bg-red-500/10 border border-red-100 dark:border-red-900/30">
-                        <p className="text-[10px] font-bold text-red-600/70 dark:text-red-400/70 uppercase tracking-widest mb-1">Advances Taken</p>
-                        <p className="font-mono font-black text-red-700 dark:text-red-400 text-lg">₹{parseFloat(finance.total_advance).toLocaleString("en-IN")}</p>
-                      </div>
-                    </div>
-
-                    <div className="flex flex-col md:flex-row items-center justify-between gap-4 p-6 bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-900/50 rounded-3xl">
-                      <div>
-                        <p className="text-xs font-black text-emerald-700 dark:text-emerald-500 uppercase tracking-widest mb-1">Net Payable Amount</p>
-                        <p className="font-mono font-black text-4xl text-emerald-800 dark:text-emerald-400">₹{parseFloat(finance.salary_to_pay).toLocaleString("en-IN")}</p>
-                      </div>
-                      <button onClick={handleDownloadSlip} disabled={downloadingId} className="w-full md:w-auto px-6 py-4 bg-emerald-500 hover:bg-emerald-600 text-white font-black rounded-2xl shadow-lg shadow-emerald-500/20 transition-all flex items-center justify-center gap-2 active:scale-95 disabled:opacity-50">
-                        {downloadingId ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} strokeWidth={2.5} />} 
-                        Download Paystub
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Ledger History */}
-                <div className="xl:col-span-1 space-y-4 flex flex-col h-[500px] xl:h-[auto]">
-                  <h3 className="text-sm font-black text-gray-900 dark:text-white uppercase tracking-widest flex items-center gap-2 px-2 shrink-0">
-                    <History size={16} className="text-orange-500" /> Transaction Ledger
-                  </h3>
-                  
-                  <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-3xl p-5 shadow-sm flex-1 overflow-hidden flex flex-col">
-                    {finance.advance_history?.length === 0 ? (
-                      <div className="flex-1 flex flex-col items-center justify-center text-center opacity-50">
-                        <Banknote size={32} className="text-gray-400 mb-3" />
-                        <p className="font-bold text-sm text-gray-500">No transactions this month.</p>
-                      </div>
-                    ) : (
-                      <div className="overflow-y-auto custom-scrollbar pr-2 space-y-3 pb-2 flex-1">
-                        {finance.advance_history?.map((txn) => (
-                          <div key={txn.id} className="bg-orange-50/50 dark:bg-orange-900/10 border border-orange-100 dark:border-orange-900/30 rounded-2xl p-4">
-                            <div className="flex justify-between items-start mb-2">
-                              <span className="font-mono font-black text-orange-600 dark:text-orange-400 text-base">₹{parseFloat(txn.amount).toLocaleString("en-IN")}</span>
-                              <span className="text-[10px] font-black text-orange-800/50 dark:text-orange-200/50 uppercase tracking-widest">{txn.type.replace('_', ' ')}</span>
-                            </div>
-                            <p className="text-xs font-bold text-gray-700 dark:text-neutral-300 leading-snug mb-3">{txn.remarks || "No remarks provided"}</p>
-                            <div className="flex items-center justify-between pt-3 border-t border-orange-200/50 dark:border-orange-900/50">
-                              <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">
-                                {new Date(txn.created_at).toLocaleString("en-IN", { month: 'short', day: 'numeric', hour: '2-digit', minute:'2-digit' })}
-                              </span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ═══════════════════════════════════════════════════════════════
-            TAB: PROFILE & SETTINGS
-        ═══════════════════════════════════════════════════════════════ */}
-        {activeTab === "profile" && (
-          <div className="space-y-6 max-w-2xl mx-auto animate-in slide-in-from-bottom-4 duration-500">
-            
-            <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-[2rem] p-8 shadow-sm text-center relative overflow-hidden">
-              <div className="absolute top-0 left-0 w-full h-32 bg-gradient-to-b from-blue-500/10 to-transparent"></div>
-              
-              <div className="w-24 h-24 mx-auto rounded-[2rem] bg-blue-100 dark:bg-blue-500/20 text-blue-600 dark:text-blue-400 flex items-center justify-center text-3xl font-black shadow-lg shadow-blue-500/10 border-4 border-white dark:border-neutral-900 relative z-10 mb-4">
-                {initials}
-              </div>
-              
-              <h2 className="text-2xl font-black text-gray-900 dark:text-white relative z-10">{profile?.name}</h2>
-              <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mt-1 relative z-10">{profile?.role}</p>
-
-              <div className="grid grid-cols-2 gap-4 mt-8 relative z-10 text-left">
-                <div className="p-4 bg-gray-50 dark:bg-[#111] rounded-2xl">
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Mobile</p>
-                  <p className="font-mono font-black text-sm text-gray-900 dark:text-white">{profile?.mobile_number}</p>
-                </div>
-                <div className="p-4 bg-gray-50 dark:bg-[#111] rounded-2xl">
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Shift Target</p>
-                  <p className="font-mono font-black text-sm text-gray-900 dark:text-white">{profile?.standard_shift_hours}h / Day</p>
-                </div>
-              </div>
-            </div>
-
-            {/* THEME TOGGLE FOR STAFF */}
-            <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-[2rem] p-4 shadow-sm">
-              <button onClick={toggleTheme} className="w-full flex items-center justify-between p-4 rounded-2xl hover:bg-gray-50 dark:hover:bg-neutral-900 transition-colors group">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-full bg-gray-100 dark:bg-neutral-900 flex items-center justify-center text-gray-600 dark:text-neutral-400 group-hover:text-emerald-500 transition-colors">
-                    {dark ? <Sun size={16} /> : <Moon size={16} />}
-                  </div>
-                  <div className="text-left">
-                    <span className="font-black text-sm text-gray-900 dark:text-white block">Appearance</span>
-                    <span className="text-[10px] font-bold text-gray-400 tracking-widest uppercase">Switch to {dark ? "Light" : "Dark"} Mode</span>
-                  </div>
-                </div>
-              </button>
-            </div>
-
-            <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-[2rem] p-4 shadow-sm">
-              <button onClick={() => logout(router)} className="w-full flex items-center justify-between p-4 rounded-2xl bg-red-50 dark:bg-red-500/10 border border-red-100 dark:border-red-900/30 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-500/20 transition-colors active:scale-[0.98]">
-                <div className="flex items-center gap-3">
-                  <LogOut size={18} />
-                  <span className="font-black text-sm">Secure Logout</span>
-                </div>
-              </button>
             </div>
           </div>
         )}
 
       </main>
 
-      {/* ── MOBILE BOTTOM NAV (PWA STYLE) ──────────────────────────────── */}
-      <nav className="md:hidden fixed bottom-0 w-full bg-white/90 dark:bg-black/90 backdrop-blur-2xl border-t border-gray-200 dark:border-neutral-800 z-50 px-2 pt-2 pb-safe shadow-[0_-10px_40px_-15px_rgba(0,0,0,0.1)] dark:shadow-none">
-        <div className="flex justify-around items-center mb-2">
+      {/* ── HIGH-END MOBILE BOTTOM NAVBAR ── */}
+      <div className="fixed bottom-4 left-4 right-4 z-50 animate-in slide-in-from-bottom-6 duration-500 pb-safe">
+        <div className="bg-white/85 dark:bg-[#0a0a0a]/85 backdrop-blur-2xl border border-gray-200/60 dark:border-neutral-800/60 shadow-[0_8px_30px_rgb(0,0,0,0.12)] rounded-3xl p-2 flex items-center justify-between">
           {navItems.map((item) => {
             const active = activeTab === item.id;
             const Icon = item.icon;
             return (
-              <button key={item.id} onClick={() => setActiveTab(item.id)} className="flex-1 flex flex-col items-center gap-1 p-1">
-                <div className={`relative p-2 rounded-xl transition-all duration-300 ${active ? 'bg-emerald-100 dark:bg-emerald-500/20' : 'bg-transparent'}`}>
-                  <Icon size={22} className={active ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-400 dark:text-neutral-500'} strokeWidth={active ? 2.5 : 2} />
-                  {active && <span className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-1 h-1 bg-emerald-500 rounded-full"></span>}
-                </div>
-                <span className={`text-[10px] font-bold transition-colors ${active ? 'text-emerald-700 dark:text-emerald-400' : 'text-gray-500 dark:text-neutral-500'}`}>
+              <button 
+                key={item.id} 
+                onClick={() => setActiveTab(item.id)} 
+                className="relative flex-1 flex flex-col items-center justify-center p-2 rounded-2xl group transition-all"
+              >
+                {active && (
+                  <span className="absolute inset-0 bg-blue-50 dark:bg-blue-500/20 rounded-2xl -z-10 animate-in zoom-in-90 duration-200"></span>
+                )}
+                <Icon size={20} className={`mb-1 transition-colors ${active ? 'text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-neutral-400'}`} strokeWidth={active ? 2.5 : 2} />
+                <span className={`text-[9px] font-black tracking-wide ${active ? 'text-blue-700 dark:text-blue-300' : 'text-gray-500 dark:text-neutral-500'}`}>
                   {item.label}
                 </span>
               </button>
             );
           })}
         </div>
-      </nav>
+      </div>
+
+      {/* ── MODAL: APPLY FOR LEAVE ── */}
+      {showLeaveForm && (
+        <div className="fixed inset-0 bg-black/60 dark:bg-black/80 backdrop-blur-sm z-[150] flex items-end md:items-center justify-center sm:p-4 shadow-[-10px_0_40px_rgba(0,0,0,0.2)]">
+          <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 w-full max-w-md rounded-t-3xl md:rounded-3xl shadow-2xl animate-in slide-in-from-bottom-full md:zoom-in-95 duration-200 flex flex-col">
+            <div className="p-5 md:p-6 border-b border-gray-100 dark:border-neutral-900 flex justify-between items-center bg-gray-50/50 dark:bg-[#111] rounded-t-3xl shrink-0">
+              <h2 className="text-base font-black flex items-center gap-2 text-gray-900 dark:text-white"><Coffee size={18} className="text-blue-500" /> Apply For Leave</h2>
+              <button onClick={() => setShowLeaveForm(false)} className="p-2 bg-gray-100 dark:bg-neutral-900 rounded-full hover:bg-gray-200 transition-colors text-gray-600 dark:text-neutral-400"><X size={16} /></button>
+            </div>
+            
+            <form onSubmit={handleApplyLeave} className="p-5 md:p-6 space-y-5 pb-safe">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-bold text-gray-500 dark:text-neutral-400 uppercase tracking-widest pl-1">Start Date</label>
+                  <input type="date" required value={leaveForm.start_date} min={new Date().toISOString().split('T')[0]} onChange={e => setLeaveForm({...leaveForm, start_date: e.target.value})} className="w-full bg-gray-50 dark:bg-[#111] border border-gray-200 dark:border-neutral-800 rounded-2xl px-4 py-3 text-sm font-black text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-blue-500/50 transition-all" />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-bold text-gray-500 dark:text-neutral-400 uppercase tracking-widest pl-1">End Date</label>
+                  <input type="date" required value={leaveForm.end_date} min={leaveForm.start_date || new Date().toISOString().split('T')[0]} onChange={e => setLeaveForm({...leaveForm, end_date: e.target.value})} className="w-full bg-gray-50 dark:bg-[#111] border border-gray-200 dark:border-neutral-800 rounded-2xl px-4 py-3 text-sm font-black text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-blue-500/50 transition-all" />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-gray-500 dark:text-neutral-400 uppercase tracking-widest pl-1">Detailed Reason</label>
+                <textarea required value={leaveForm.reason} onChange={e => setLeaveForm({...leaveForm, reason: e.target.value})} className="w-full bg-gray-50 dark:bg-[#111] border border-gray-200 dark:border-neutral-800 rounded-2xl px-4 py-3.5 text-sm font-medium text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-blue-500/50 transition-all resize-none h-24 custom-scrollbar" placeholder="Please provide the exact reason for your leave request..." />
+              </div>
+
+              <button type="submit" disabled={leaveSubmitting} className="w-full py-4 bg-blue-500 hover:bg-blue-600 text-white text-sm font-black rounded-2xl flex items-center justify-center gap-2 shadow-lg shadow-blue-500/20 active:scale-[0.98] transition-all disabled:opacity-50 uppercase tracking-wider mt-2">
+                {leaveSubmitting ? <Loader2 size={18} className="animate-spin" /> : <CheckCircle2 size={18} strokeWidth={2.5} />} 
+                Submit Application
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
 
     </div>
   );

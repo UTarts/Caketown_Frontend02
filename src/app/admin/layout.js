@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import { useRouter, usePathname, useSearchParams } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation"; // REMOVED useSearchParams
 import Link from "next/link";
 import {
   LayoutDashboard, Building2, Users, Settings, LogOut, Banknote, Sun, Moon, 
@@ -12,7 +12,6 @@ import { callApi, logout } from "@/lib/apiClient";
 export default function AdminLayout({ children }) {
   const router = useRouter();
   const pathname = usePathname();
-  const searchParams = useSearchParams();
   
   const [user, setUser] = useState(null);
   const [dark, setDark] = useState(false);
@@ -62,12 +61,13 @@ export default function AdminLayout({ children }) {
       const res = await callApi("get_branches");
       if (res.status === "success" && res.data?.length > 0) {
         
-        // FIX: Removed strict filter so all returned branches display correctly
         const activeBranches = res.data; 
         setBranches(activeBranches);
         
-        // Auto-select logic: Check URL first, then fallback to first branch
-        const urlBranchId = searchParams.get("branch_id");
+        // STATIC-EXPORT SAFE URL READING
+        const params = new URLSearchParams(window.location.search);
+        const urlBranchId = params.get("branch_id");
+
         if (urlBranchId && activeBranches.some(b => String(b.id) === urlBranchId)) {
           setActiveBranchId(urlBranchId);
         } else if (activeBranches.length > 0) {
@@ -82,7 +82,7 @@ export default function AdminLayout({ children }) {
       setBranchesLoading(false);
     };
     fetchBranches();
-  }, [pathname, searchParams, router]);
+  }, [pathname, router]);
 
   const handleBranchChange = (e) => {
     const newId = e.target.value;
@@ -120,6 +120,14 @@ export default function AdminLayout({ children }) {
     { name: "Attendance Ledger", path: `/admin/attendance?branch_id=${activeBranchId}`, icon: CalendarDays },
     { name: "Payroll Engine", path: `/admin/payroll?branch_id=${activeBranchId}`, icon: Banknote },
     { name: "Financial Ledger", path: `/admin/finance?branch_id=${activeBranchId}`, icon: History },
+  ];
+
+  // Mobile Bottom Quick-Access Dock
+  const mobileBottomNav = [
+    { name: "Overview", path: "/admin", icon: LayoutDashboard, exact: true },
+    { name: "Floor", path: `/admin/live-floor?branch_id=${activeBranchId}`, icon: Activity },
+    { name: "Staff", path: `/admin/personnel?branch_id=${activeBranchId}`, icon: Users },
+    { name: "Ledger", path: `/admin/attendance?branch_id=${activeBranchId}`, icon: CalendarDays },
   ];
 
   const isActive = (path, exact = false) => {
@@ -179,8 +187,8 @@ export default function AdminLayout({ children }) {
               const active = isActive(item.path);
               const Icon = item.icon;
               return (
-                <Link key={item.name} href={item.path} onClick={() => setMobileMenuOpen(false)} className={`flex items-center gap-3 px-3 py-3 rounded-xl transition-all duration-200 font-bold text-sm ${active ? "bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400" : "text-gray-600 dark:text-neutral-400 hover:bg-gray-50 dark:hover:bg-neutral-900 hover:text-gray-900 dark:hover:text-white"}`}>
-                  <Icon size={16} className={active ? 'text-blue-600 dark:text-blue-400' : ''} strokeWidth={active ? 2.5 : 2} />
+                <Link key={item.name} href={item.path} onClick={() => setMobileMenuOpen(false)} className={`flex items-center gap-3 px-3 py-3 rounded-xl transition-all duration-200 font-bold text-sm ${active ? "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" : "text-gray-600 dark:text-neutral-400 hover:bg-gray-50 dark:hover:bg-neutral-900 hover:text-gray-900 dark:hover:text-white"}`}>
+                  <Icon size={16} className={active ? 'text-emerald-600 dark:text-emerald-400' : ''} strokeWidth={active ? 2.5 : 2} />
                   <span className="flex-1">{item.name}</span>
                 </Link>
               );
@@ -193,7 +201,7 @@ export default function AdminLayout({ children }) {
         
         {/* User Avatar Clickable */}
         <button onClick={() => setProfileMenuOpen(!profileMenuOpen)} className="flex items-center gap-3 hover:bg-gray-50 dark:hover:bg-neutral-900 p-1.5 rounded-xl transition-colors text-left min-w-0 flex-1">
-          <div className="w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400 flex items-center justify-center font-black text-sm border border-blue-200 dark:border-blue-800 shrink-0">
+          <div className="w-10 h-10 rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 flex items-center justify-center font-black text-sm border border-emerald-200 dark:border-emerald-800 shrink-0">
             {initials}
           </div>
           <div className="overflow-hidden flex-1 min-w-0">
@@ -207,7 +215,7 @@ export default function AdminLayout({ children }) {
           <span className="text-[8px] font-black text-gray-400 uppercase tracking-widest mb-0.5">Powered By</span>
           <a href="https://www.utarts.in" target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 hover:opacity-80 transition-opacity">
             <img src="https://tzaxthrqwfgbrcqmtuec.supabase.co/storage/v1/object/public/images/UTArt_Logo.webp" alt="UT Arts" className="h-5 w-5 rounded-full object-cover border border-gray-200 dark:border-neutral-700" />
-            <span className="font-black text-xs text-blue-600 dark:text-blue-400">UT Arts</span>
+            <span className="font-black text-xs text-emerald-600 dark:text-emerald-400">UT Arts</span>
           </a>
         </div>
 
@@ -240,18 +248,18 @@ export default function AdminLayout({ children }) {
           <img src="/logo.png" alt="Caketown" className="h-6 w-auto object-contain object-left" />
           <span className="text-[8px] text-emerald-600 font-black uppercase tracking-widest mt-0.5">Admin</span>
         </div>
+        
         <div className="flex-1"></div>
         
-        <div className="flex items-center gap-2 z-20">
-          <button onClick={() => setMobileMenuOpen(true)} className="p-2.5 rounded-full bg-emerald-50 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 transition-colors">
-            <Menu size={18} />
-          </button>
-        </div>
+        {/* Quick Profile Access on Mobile Header */}
+        <Link href="/admin/profile" className="z-20 w-8 h-8 rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 flex items-center justify-center font-black text-xs border border-emerald-200 dark:border-emerald-800 shadow-sm">
+          {initials}
+        </Link>
       </div>
 
       {/* ── Mobile Slide-out Drawer ──────────────── */}
       {mobileMenuOpen && (
-        <div className="md:hidden fixed inset-0 z-50 flex">
+        <div className="md:hidden fixed inset-0 z-[100] flex">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setMobileMenuOpen(false)}></div>
           <div className="relative w-4/5 max-w-sm bg-white dark:bg-black h-full flex flex-col shadow-2xl animate-in slide-in-from-left duration-300">
             <button onClick={() => setMobileMenuOpen(false)} className="absolute top-4 right-4 p-2 bg-gray-100 dark:bg-neutral-900 rounded-full z-50 text-gray-600 dark:text-neutral-400"><X size={20}/></button>
@@ -266,11 +274,49 @@ export default function AdminLayout({ children }) {
       </aside>
 
       {/* ── Main content ───────────────────────────────────── */}
-      <main className="flex-1 md:ml-72 pt-16 md:pt-0 min-h-screen relative z-0">
+      <main className="flex-1 md:ml-72 pt-16 md:pt-0 min-h-screen relative z-0 pb-28 md:pb-0">
         <div className="p-4 md:p-8 max-w-[1600px] mx-auto animate-in fade-in duration-500">
           {children}
         </div>
       </main>
+
+      {/* ── HIGH-END MOBILE BOTTOM NAVBAR (Glassmorphic) ──────────────── */}
+      <div className="md:hidden fixed bottom-4 left-4 right-4 z-50 animate-in slide-in-from-bottom-6 duration-500 pb-safe">
+        <div className="bg-white/85 dark:bg-[#0a0a0a]/85 backdrop-blur-2xl border border-gray-200/60 dark:border-neutral-800/60 shadow-[0_8px_30px_rgb(0,0,0,0.12)] rounded-3xl p-2 flex items-center justify-between">
+          
+          {mobileBottomNav.map((item) => {
+            const active = isActive(item.path, item.exact);
+            const Icon = item.icon;
+            return (
+              <Link 
+                key={item.name} 
+                href={item.path} 
+                className="relative flex-1 flex flex-col items-center justify-center p-2 rounded-2xl group transition-all"
+              >
+                {active && (
+                  <span className="absolute inset-0 bg-emerald-50 dark:bg-emerald-500/20 rounded-2xl -z-10 animate-in zoom-in-90 duration-200"></span>
+                )}
+                <Icon size={20} className={`mb-1 transition-colors ${active ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-500 dark:text-neutral-400'}`} strokeWidth={active ? 2.5 : 2} />
+                <span className={`text-[9px] font-black tracking-wide ${active ? 'text-emerald-700 dark:text-emerald-300' : 'text-gray-500 dark:text-neutral-500'}`}>
+                  {item.name}
+                </span>
+              </Link>
+            );
+          })}
+
+          {/* Render "Menu" trigger */}
+          <button 
+            onClick={() => setMobileMenuOpen(true)} 
+            className="relative flex-1 flex flex-col items-center justify-center p-2 rounded-2xl transition-all"
+          >
+            <Menu size={20} className="mb-1 text-gray-500 dark:text-neutral-400" strokeWidth={2} />
+            <span className="text-[9px] font-black tracking-wide text-gray-500 dark:text-neutral-500">
+              More
+            </span>
+          </button>
+
+        </div>
+      </div>
 
     </div>
   );
