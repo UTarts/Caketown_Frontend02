@@ -5,7 +5,8 @@ import { callApi } from "@/lib/apiClient";
 import {
   Building2, CalendarRange, ChevronDown, Loader2, Save, 
   Settings2, Plus, Trash2, ShieldCheck, MonitorSmartphone,
-  CheckCircle2, XCircle, UserCog, Edit, KeyRound, MapPin, Users
+  CheckCircle2, XCircle, UserCog, Edit, KeyRound, MapPin, Users,
+  Briefcase, PlusCircle, X
 } from "lucide-react";
 
 const pad = (n, width = 2) => String(n).padStart(width, "0");
@@ -32,6 +33,11 @@ export default function AdminSettingsPage() {
   const [admins, setAdmins] = useState([]);
   const [adminModal, setAdminModal] = useState(null); 
 
+  // -- DEPARTMENTS & ROLES STATE --
+  const [departments, setDepartments] = useState([]);
+  const [deptModal, setDeptModal] = useState(null);
+  const [deptSubmitting, setDeptSubmitting] = useState(false);
+
   useEffect(() => {
     const raw = localStorage.getItem("caketown_session");
     if (!raw) return;
@@ -40,9 +46,10 @@ export default function AdminSettingsPage() {
 
   const fetchGlobals = useCallback(async () => {
     setLoading(true);
-    const [bRes, uRes] = await Promise.all([
+    const [bRes, uRes, dRes] = await Promise.all([
       callApi("get_branches"),
-      callApi("get_users")
+      callApi("get_users"),
+      callApi("get_departments_roles")
     ]);
     
     if (bRes.status === "success") {
@@ -50,9 +57,10 @@ export default function AdminSettingsPage() {
       if (!selectedBranchId && bRes.data.length > 0) setSelectedBranchId(bRes.data[0].id);
     }
     
-    if (uRes.status === "success") {
-      setAdmins((uRes.data || []).filter(u => u.role === 'admin'));
-    }
+    if (uRes.status === "success") setAdmins((uRes.data || []).filter(u => u.role === 'admin'));
+    
+    if (dRes.status === "success") setDepartments(dRes.data || []);
+    
     setLoading(false);
   }, [selectedBranchId]);
 
@@ -154,6 +162,68 @@ export default function AdminSettingsPage() {
     else alert(res.message || "Operation failed.");
   };
 
+  // ─── DEPARTMENTS & ROLES HANDLERS ──────────────────────────────────────
+  const handleDeptSubmit = async (e) => {
+    e.preventDefault();
+    if (!deptModal.name.trim()) return alert("Department name is required.");
+    if (deptModal.roles.length === 0) return alert("At least one role is required.");
+
+    setDeptSubmitting(true);
+    
+    const url = process.env.NEXT_PUBLIC_API_URL || "https://your-hostinger-domain.com";
+    try {
+      const response = await fetch(`${url}/api.php`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: deptModal.action === 'create' ? 'create_department' : 'update_department',
+          id: deptModal.id,
+          department_name: deptModal.name,
+          roles: JSON.stringify(deptModal.roles),
+          admin_id: session?.id
+        })
+      });
+      const res = await response.json();
+      
+      if (res.status === "success") {
+        setDeptModal(null);
+        fetchGlobals();
+      } else {
+        alert(res.message || "Failed to save department.");
+      }
+    } catch (err) {
+      alert("Network error. Ensure the backend endpoint is created.");
+    }
+    setDeptSubmitting(false);
+  };
+
+  const deleteDept = async (id) => {
+    if (!confirm("Are you sure you want to delete this department? Users assigned to this department will not be deleted, but their department field may act unexpectedly.")) return;
+    
+    const url = process.env.NEXT_PUBLIC_API_URL || "https://your-hostinger-domain.com";
+    try {
+      const response = await fetch(`${url}/api.php`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'delete_department', id, admin_id: session?.id })
+      });
+      const res = await response.json();
+      if (res.status === "success") fetchGlobals();
+      else alert(res.message || "Failed to delete department.");
+    } catch (err) { alert("Network error."); }
+  };
+
+  const addRoleToModal = () => {
+    const input = document.getElementById("newRoleInput");
+    if (!input || !input.value.trim()) return;
+    setDeptModal(prev => ({ ...prev, roles: [...prev.roles, input.value.trim()] }));
+    input.value = "";
+  };
+
+  const removeRoleFromModal = (idx) => {
+    setDeptModal(prev => ({ ...prev, roles: prev.roles.filter((_, i) => i !== idx) }));
+  };
+
   return (
     <div className="flex flex-col h-[calc(100vh-6rem)] md:h-[calc(100vh-2rem)] gap-4 md:gap-5 animate-in fade-in duration-500 text-gray-900 dark:text-neutral-200 font-sans w-full min-w-0 max-w-full overflow-hidden">
       
@@ -171,9 +241,11 @@ export default function AdminSettingsPage() {
 
         <div className="flex items-center gap-2 w-full md:w-auto overflow-x-auto">
           <div className="flex items-center bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-xl p-1 shadow-sm shrink-0">
-            
             <button onClick={() => setActiveTab("branches")} className={`px-4 py-2.5 rounded-lg text-xs font-black transition-all whitespace-nowrap flex items-center gap-2 ${activeTab === 'branches' ? 'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-400' : 'text-gray-500 hover:text-gray-900 dark:hover:text-white'}`}>
               <Building2 size={14} /> Branches
+            </button>
+            <button onClick={() => setActiveTab("departments")} className={`px-4 py-2.5 rounded-lg text-xs font-black transition-all whitespace-nowrap flex items-center gap-2 ${activeTab === 'departments' ? 'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-400' : 'text-gray-500 hover:text-gray-900 dark:hover:text-white'}`}>
+              <Briefcase size={14} /> Roles & Depts
             </button>
             <button onClick={() => setActiveTab("admins")} className={`px-4 py-2.5 rounded-lg text-xs font-black transition-all whitespace-nowrap flex items-center gap-2 ${activeTab === 'admins' ? 'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-400' : 'text-gray-500 hover:text-gray-900 dark:hover:text-white'}`}>
               <ShieldCheck size={14} /> Administrators
@@ -228,7 +300,6 @@ export default function AdminSettingsPage() {
                    </div>
                 ) : (
                   <>
-                    {/* TIER A: 4 Paid Leaves */}
                     <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-3xl shadow-sm overflow-hidden">
                       <div className="p-5 md:p-6 border-b border-gray-100 dark:border-neutral-900 bg-emerald-50/30 dark:bg-emerald-900/5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                         <div>
@@ -267,7 +338,6 @@ export default function AdminSettingsPage() {
                       </div>
                     </div>
 
-                    {/* TIER B: 2 Paid Leaves */}
                     <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-3xl shadow-sm overflow-hidden">
                       <div className="p-5 md:p-6 border-b border-gray-100 dark:border-neutral-900 bg-blue-50/30 dark:bg-blue-900/5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                         <div>
@@ -312,7 +382,52 @@ export default function AdminSettingsPage() {
           )}
 
           {/* ══════════════════════════════════════════════════════════════════
-              TAB 2: BRANCH MANAGEMENT
+              TAB 2: DEPARTMENTS & ROLES
+          ══════════════════════════════════════════════════════════════════ */}
+          {activeTab === "departments" && (
+            <div className="xl:col-span-3">
+              <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-3xl overflow-hidden shadow-sm">
+                <div className="p-5 md:p-6 border-b border-gray-100 dark:border-neutral-900 bg-gray-50/50 dark:bg-[#111]/50 flex justify-between items-center">
+                   <div>
+                     <h2 className="text-lg font-black text-gray-900 dark:text-white">Organization Structure</h2>
+                     <p className="text-xs text-gray-500 font-bold uppercase tracking-widest mt-1">Manage departments and designations</p>
+                   </div>
+                   <button onClick={() => setDeptModal({action: 'create', name: '', roles: []})} className="flex items-center gap-2 px-4 py-2.5 bg-gray-900 hover:bg-black dark:bg-white dark:hover:bg-gray-200 text-white dark:text-black text-xs font-black uppercase tracking-widest rounded-xl transition-all shadow-lg active:scale-95">
+                     <Plus size={14} strokeWidth={3} /> Add Department
+                   </button>
+                </div>
+                
+                {loading ? (
+                   <div className="p-20 flex justify-center"><Loader2 className="animate-spin text-indigo-500" size={32} /></div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 p-6">
+                    {departments.map(dept => (
+                      <div key={dept.id || dept.name} className="border border-gray-200 dark:border-neutral-800 rounded-2xl p-5 bg-gray-50/50 dark:bg-[#111]/50 relative group">
+                        <div className="flex justify-between items-start mb-4">
+                          <h3 className="font-black text-lg text-gray-900 dark:text-white">{dept.name}</h3>
+                          <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button onClick={() => setDeptModal({action: 'edit', id: dept.id, name: dept.name, roles: dept.roles})} className="p-1.5 text-gray-500 hover:text-blue-500 bg-white dark:bg-black rounded-lg shadow-sm border border-gray-200 dark:border-neutral-800"><Edit size={14}/></button>
+                            <button onClick={() => deleteDept(dept.id)} className="p-1.5 text-gray-500 hover:text-red-500 bg-white dark:bg-black rounded-lg shadow-sm border border-gray-200 dark:border-neutral-800"><Trash2 size={14}/></button>
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {dept.roles.map((role, idx) => (
+                            <span key={idx} className="px-2.5 py-1 bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-700 text-xs font-bold text-gray-600 dark:text-neutral-400 rounded-md shadow-sm">
+                              {role}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                    {departments.length === 0 && <div className="col-span-full p-8 text-center text-sm font-bold text-gray-400">No departments configured.</div>}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ══════════════════════════════════════════════════════════════════
+              TAB 3: BRANCHES
           ══════════════════════════════════════════════════════════════════ */}
           {activeTab === "branches" && (
             <div className="xl:col-span-3">
@@ -382,7 +497,7 @@ export default function AdminSettingsPage() {
           )}
 
           {/* ══════════════════════════════════════════════════════════════════
-              TAB 3: ADMIN ACCOUNTS
+              TAB 4: ADMIN ACCOUNTS
           ══════════════════════════════════════════════════════════════════ */}
           {activeTab === "admins" && (
             <div className="xl:col-span-3">
@@ -446,6 +561,49 @@ export default function AdminSettingsPage() {
           MODALS
       ══════════════════════════════════════════════════════════════════ */}
       
+      {/* Department Modal */}
+      {deptModal && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[150] flex items-end md:items-center justify-center sm:p-4 shadow-[-10px_0_40px_rgba(0,0,0,0.2)]">
+          <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 w-full md:max-w-md rounded-t-3xl md:rounded-3xl shadow-2xl animate-in slide-in-from-bottom-full md:zoom-in-95 duration-200 flex flex-col">
+            <div className="p-5 border-b border-gray-100 dark:border-neutral-900 flex justify-between items-center bg-gray-50/50 dark:bg-[#111] rounded-t-3xl shrink-0">
+              <h2 className="text-sm font-black flex items-center gap-2"><Briefcase size={16} className="text-indigo-500" /> {deptModal.action === 'create' ? 'Add Department' : 'Edit Department'}</h2>
+              <button onClick={() => setDeptModal(null)} className="p-2 bg-gray-100 dark:bg-neutral-900 rounded-full hover:bg-gray-200 transition-colors text-gray-600 dark:text-neutral-400"><X size={16} /></button>
+            </div>
+            <form onSubmit={handleDeptSubmit} className="p-5 md:p-6 space-y-5 pb-safe">
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-gray-500 dark:text-neutral-400 uppercase tracking-widest pl-1">Department Name</label>
+                <input required autoFocus type="text" value={deptModal.name} onChange={(e) => setDeptModal({...deptModal, name: e.target.value})} placeholder="e.g. Kitchen, Service..." className="w-full bg-gray-50 dark:bg-[#111] border border-gray-200 dark:border-neutral-800 rounded-xl px-4 py-3 text-sm font-bold text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/50" />
+              </div>
+              
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-gray-500 dark:text-neutral-400 uppercase tracking-widest pl-1">Define Roles / Designations</label>
+                <div className="flex gap-2 mb-3">
+                  <input id="newRoleInput" type="text" placeholder="e.g. Executive Chef" onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addRoleToModal())} className="flex-1 bg-gray-50 dark:bg-[#111] border border-gray-200 dark:border-neutral-800 rounded-xl px-4 py-2.5 text-sm font-bold text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/50" />
+                  <button type="button" onClick={addRoleToModal} className="px-4 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 rounded-xl hover:bg-indigo-100 transition-colors border border-indigo-100 dark:border-indigo-900/50"><Plus size={18}/></button>
+                </div>
+                
+                <div className="flex flex-wrap gap-2 p-3 min-h-20 bg-gray-50/50 dark:bg-[#111]/50 border border-gray-200 dark:border-neutral-800 rounded-xl">
+                  {deptModal.roles.length === 0 ? (
+                    <span className="text-xs text-gray-400 font-bold m-auto">No roles added yet.</span>
+                  ) : (
+                    deptModal.roles.map((role, idx) => (
+                      <span key={idx} className="flex items-center gap-1.5 px-3 py-1.5 bg-white dark:bg-black border border-gray-200 dark:border-neutral-700 text-xs font-bold text-gray-700 dark:text-neutral-300 rounded-lg shadow-sm">
+                        {role}
+                        <button type="button" onClick={() => removeRoleFromModal(idx)} className="text-gray-400 hover:text-red-500"><X size={12}/></button>
+                      </span>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              <button type="submit" disabled={deptSubmitting} className="w-full py-3.5 bg-gray-900 hover:bg-black dark:bg-white dark:hover:bg-gray-200 text-white dark:text-black text-xs font-black uppercase tracking-widest rounded-xl transition-all shadow-lg active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2 mt-2">
+                {deptSubmitting ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} strokeWidth={3} />} {deptModal.action === 'create' ? 'Create Department' : 'Save Changes'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Branch Form Modal */}
       {branchFormModal && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[150] flex items-end md:items-center justify-center sm:p-4 shadow-[-10px_0_40px_rgba(0,0,0,0.2)]">

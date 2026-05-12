@@ -1,15 +1,15 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
-import { useRouter, usePathname } from "next/navigation"; // REMOVED useSearchParams
+import { useEffect, useState, useRef, Suspense } from "react";
+import { useRouter, usePathname } from "next/navigation"; 
 import Link from "next/link";
 import {
   LayoutDashboard, Building2, Users, Settings, LogOut, Banknote, Sun, Moon, 
-  ChevronRight, Activity, CalendarDays, History, Menu, X, UserCircle2, Shield, ExternalLink, FileText, ChevronDown
+  ChevronRight, Activity, CalendarDays, History, Menu, X, UserCircle2, Shield, ExternalLink, FileText, ChevronDown, CalendarRange
 } from "lucide-react";
 import { callApi, logout } from "@/lib/apiClient";
 
-export default function AdminLayout({ children }) {
+function AdminLayoutContent({ children }) {
   const router = useRouter();
   const pathname = usePathname();
   
@@ -24,6 +24,10 @@ export default function AdminLayout({ children }) {
   const [branchesLoading, setBranchesLoading] = useState(true);
 
   const profileMenuRef = useRef(null);
+
+  // Dropdown states for sidebar
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [reportsOpen, setReportsOpen] = useState(false);
 
   useEffect(() => {
     const saved = localStorage.getItem("theme");
@@ -74,7 +78,7 @@ export default function AdminLayout({ children }) {
           const defaultId = String(activeBranches[0].id);
           setActiveBranchId(defaultId);
           // If on a branch-specific page without an ID, force redirect to set the ID
-          if (pathname !== "/admin" && pathname !== "/admin/settings" && pathname !== "/admin/reports" && pathname !== "/admin/profile") {
+          if (pathname !== "/admin" && !pathname.startsWith("/admin/settings") && !pathname.startsWith("/admin/reports") && pathname !== "/admin/profile") {
              router.replace(`${pathname}?branch_id=${defaultId}`);
           }
         }
@@ -89,7 +93,7 @@ export default function AdminLayout({ children }) {
     setActiveBranchId(newId);
     
     // If the user is currently on a branch-specific page, update the URL parameter
-    if (pathname !== "/admin" && pathname !== "/admin/settings" && pathname !== "/admin/reports" && pathname !== "/admin/profile") {
+    if (pathname !== "/admin" && !pathname.startsWith("/admin/settings") && !pathname.startsWith("/admin/reports") && pathname !== "/admin/profile") {
       router.push(`${pathname}?branch_id=${newId}`);
     }
   };
@@ -109,17 +113,28 @@ export default function AdminLayout({ children }) {
 
   // ─── ENTERPRISE NAVIGATION STRUCTURE ───
   const globalNav = [
-    { name: "System Overview", path: "/admin", icon: LayoutDashboard, exact: true },
-    { name: "Master Settings", path: "/admin/settings", icon: Settings },
-    { name: "Global Reports", path: "/admin/reports", icon: FileText },
+    { name: "Admin Dashboard", path: "/admin", icon: LayoutDashboard, exact: true },
   ];
 
   const branchNav = [
     { name: "Live Floor", path: `/admin/live-floor?branch_id=${activeBranchId}`, icon: Activity },
-    { name: "Personnel & Profiles", path: `/admin/personnel?branch_id=${activeBranchId}`, icon: Users },
+    { name: "Employees & Profiles", path: `/admin/personnel?branch_id=${activeBranchId}`, icon: Users },
     { name: "Attendance Ledger", path: `/admin/attendance?branch_id=${activeBranchId}`, icon: CalendarDays },
     { name: "Payroll Engine", path: `/admin/payroll?branch_id=${activeBranchId}`, icon: Banknote },
     { name: "Financial Ledger", path: `/admin/finance?branch_id=${activeBranchId}`, icon: History },
+  ];
+
+  const settingsDropdown = [
+    { name: "Branches", icon: Building2, targetTab: "branches" },
+    { name: "Roles & Depts", icon: Building2, targetTab: "departments" },
+    { name: "Administrators", icon: Shield, targetTab: "admins" },
+    { name: "Leave Matrix", icon: CalendarRange, targetTab: "matrix" },
+  ];
+
+  const reportsDropdown = [
+    { name: "Staff Payables", icon: FileText, targetTab: "payables" },
+    { name: "Branch Finances", icon: Banknote, targetTab: "finances" },
+    { name: "Attendance Pulse", icon: Activity, targetTab: "attendance" }
   ];
 
   // Mobile Bottom Quick-Access Dock
@@ -136,11 +151,21 @@ export default function AdminLayout({ children }) {
     return pathname.startsWith(baseNavPath);
   };
 
+  const handleSettingsClick = (tab) => {
+    setMobileMenuOpen(false);
+    router.push(`/admin/settings?tab=${tab}`);
+  };
+
+  const handleReportsClick = (tab) => {
+    setMobileMenuOpen(false);
+    router.push(`/admin/reports?tab=${tab}`);
+  };
+
   const SidebarContent = () => (
     <>
       {/* Premium Diagonal Logo Container */}
       <div className="h-24 w-full bg-white shadow-[0_2px_15px_rgba(0,0,0,0.03)] shrink-0 flex flex-col justify-center px-6 relative z-10" style={{ clipPath: 'polygon(0 0, 100% 0, 100% 85%, 0 100%)' }}>
-         <img src="/logo.png" alt="Caketown" className="h-10 w-auto object-contain object-center" />
+         <img src="/logo.png" alt="Caketown" className="h-10 w-auto object-contain object-center" onError={(e) => { e.target.style.display='none'; }}/>
       </div>
 
       <nav className="flex-1 overflow-y-auto custom-scrollbar px-4 py-5 space-y-6">
@@ -164,7 +189,7 @@ export default function AdminLayout({ children }) {
 
         {/* Dynamic Branch Context Switcher */}
         <div className="bg-emerald-50/50 dark:bg-emerald-900/10 border border-emerald-100 dark:border-emerald-900/30 rounded-2xl p-3">
-          <p className="text-[9px] font-black text-emerald-600 dark:text-emerald-500 uppercase tracking-widest mb-1.5 px-1 flex items-center gap-1.5"><Building2 size={12}/> Active Context</p>
+          <p className="text-[9px] font-black text-emerald-600 dark:text-emerald-500 uppercase tracking-widest mb-1.5 px-1 flex items-center gap-1.5"><Building2 size={12}/> Active Branch</p>
           <div className="relative">
             {branchesLoading ? (
               <div className="h-10 flex items-center justify-center text-xs text-emerald-600 font-bold animate-pulse bg-white dark:bg-black rounded-xl">Loading...</div>
@@ -194,6 +219,54 @@ export default function AdminLayout({ children }) {
               );
             })}
           </div>
+        </div>
+
+        {/* Global Bottom Section (Settings & Reports) */}
+        <div>
+           <p className="px-3 text-[9px] font-black text-gray-400 uppercase tracking-widest mb-2">System Config</p>
+           <div className="space-y-1">
+              
+              {/* Settings Dropdown */}
+              <div>
+                 <button onClick={() => setSettingsOpen(!settingsOpen)} className={`w-full flex items-center justify-between px-3 py-3 rounded-xl transition-all duration-200 font-bold text-sm ${pathname.startsWith('/admin/settings') ? "bg-gray-100 dark:bg-neutral-800 text-gray-900 dark:text-white" : "text-gray-600 dark:text-neutral-400 hover:bg-gray-50 dark:hover:bg-neutral-900 hover:text-gray-900 dark:hover:text-white"}`}>
+                   <div className="flex items-center gap-3">
+                     <Settings size={16} className={pathname.startsWith('/admin/settings') ? 'text-gray-900 dark:text-white' : ''} strokeWidth={pathname.startsWith('/admin/settings') ? 2.5 : 2} />
+                     <span>Master Settings</span>
+                   </div>
+                   <ChevronDown size={14} className={`transition-transform duration-200 ${settingsOpen ? 'rotate-180' : ''}`} />
+                 </button>
+                 {settingsOpen && (
+                   <div className="mt-1 ml-4 pl-3 border-l-2 border-gray-100 dark:border-neutral-800 space-y-1 overflow-hidden animate-in slide-in-from-top-2">
+                     {settingsDropdown.map(item => (
+                       <button key={item.targetTab} onClick={() => handleSettingsClick(item.targetTab)} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 font-bold text-xs text-gray-500 hover:bg-gray-50 dark:hover:bg-neutral-900 hover:text-gray-900 dark:hover:text-white text-left">
+                         <item.icon size={14} /> {item.name}
+                       </button>
+                     ))}
+                   </div>
+                 )}
+              </div>
+
+              {/* Reports Dropdown */}
+              <div>
+                 <button onClick={() => setReportsOpen(!reportsOpen)} className={`w-full flex items-center justify-between px-3 py-3 rounded-xl transition-all duration-200 font-bold text-sm ${pathname.startsWith('/admin/reports') ? "bg-gray-100 dark:bg-neutral-800 text-gray-900 dark:text-white" : "text-gray-600 dark:text-neutral-400 hover:bg-gray-50 dark:hover:bg-neutral-900 hover:text-gray-900 dark:hover:text-white"}`}>
+                   <div className="flex items-center gap-3">
+                     <FileText size={16} className={pathname.startsWith('/admin/reports') ? 'text-gray-900 dark:text-white' : ''} strokeWidth={pathname.startsWith('/admin/reports') ? 2.5 : 2} />
+                     <span>Global Reports</span>
+                   </div>
+                   <ChevronDown size={14} className={`transition-transform duration-200 ${reportsOpen ? 'rotate-180' : ''}`} />
+                 </button>
+                 {reportsOpen && (
+                   <div className="mt-1 ml-4 pl-3 border-l-2 border-gray-100 dark:border-neutral-800 space-y-1 overflow-hidden animate-in slide-in-from-top-2">
+                     {reportsDropdown.map(item => (
+                       <button key={item.targetTab} onClick={() => handleReportsClick(item.targetTab)} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 font-bold text-xs text-gray-500 hover:bg-gray-50 dark:hover:bg-neutral-900 hover:text-gray-900 dark:hover:text-white text-left">
+                         <item.icon size={14} /> {item.name}
+                       </button>
+                     ))}
+                   </div>
+                 )}
+              </div>
+
+           </div>
         </div>
       </nav>
 
@@ -245,7 +318,7 @@ export default function AdminLayout({ children }) {
       <div className="md:hidden fixed top-0 left-0 right-0 z-40 bg-white/80 dark:bg-black/80 backdrop-blur-xl border-b border-gray-200 dark:border-neutral-800 h-16 flex items-center justify-between shadow-sm px-4">
         {/* Mobile Diagonal Logo Container */}
         <div className="absolute top-0 left-0 h-16 w-48 bg-white shadow-[2px_0_10px_rgba(0,0,0,0.1)] z-10 flex flex-col justify-center px-4" style={{ clipPath: 'polygon(0 0, 100% 0, 85% 100%, 0 100%)' }}>
-          <img src="/logo.png" alt="Caketown" className="h-6 w-auto object-contain object-left" />
+          <img src="/logo.png" alt="Caketown" className="h-6 w-auto object-contain object-left" onError={(e) => { e.target.style.display='none'; }}/>
           <span className="text-[8px] text-emerald-600 font-black uppercase tracking-widest mt-0.5">Admin</span>
         </div>
         
@@ -320,4 +393,12 @@ export default function AdminLayout({ children }) {
 
     </div>
   );
+}
+
+export default function AdminLayoutWrapper({ children }) {
+  return (
+    <Suspense fallback={<div className="flex items-center justify-center h-screen bg-gray-50 dark:bg-black"><div className="animate-pulse font-bold text-gray-500">Loading Configuration...</div></div>}>
+       <AdminLayoutContent>{children}</AdminLayoutContent>
+    </Suspense>
+  )
 }

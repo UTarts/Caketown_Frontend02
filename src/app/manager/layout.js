@@ -68,7 +68,6 @@ export default function ManagerLayout({ children }) {
     { name: "Dashboard", path: "/manager/dashboard", icon: LayoutDashboard, perm: null, exact: true },
     { name: "Live Floor", path: "/manager/live-floor", icon: Activity, perm: "view_live_attendance" },
     { name: "Terminal Ops", path: "/manager/terminal", icon: MonitorPlay, perm: "manage_terminal" },
-    { name: "Face Data", path: "/manager/faces", icon: ScanFace, perm: "register_face" },
     { name: "Staff Roster", path: "/manager/staff", icon: Users, perm: "view_staff_list" },
     { name: "Attendance", path: "/manager/attendance", icon: CalendarDays, perm: "view_attendance_history" },
     { name: "Payroll", path: "/manager/payroll", icon: Banknote, perm: "view_payroll" },
