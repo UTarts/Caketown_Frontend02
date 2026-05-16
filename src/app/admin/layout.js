@@ -161,10 +161,12 @@ function AdminLayoutContent({ children }) {
     router.push(`/admin/reports?tab=${tab}`);
   };
 
-  const SidebarContent = () => (
+  // ─── FIXED: CHANGED FROM A COMPONENT TO A STATIC VARIABLE ───
+  // This prevents React from destroying and recreating the sidebar on state changes!
+  const sidebarContentUI = (
     <>
       {/* Premium Diagonal Logo Container */}
-      <div className="h-24 w-full bg-white shadow-[0_2px_15px_rgba(0,0,0,0.03)] shrink-0 flex flex-col justify-center px-6 relative z-10" style={{ clipPath: 'polygon(0 0, 100% 0, 100% 85%, 0 100%)' }}>
+      <div className="h-24 w-full bg-white dark:bg-[#050505] shadow-[0_2px_15px_rgba(0,0,0,0.03)] shrink-0 flex flex-col justify-center px-6 relative z-10" style={{ clipPath: 'polygon(0 0, 100% 0, 100% 85%, 0 100%)' }}>
          <img src="/logo.png" alt="Caketown" className="h-10 w-auto object-contain object-center" onError={(e) => { e.target.style.display='none'; }}/>
       </div>
 
@@ -336,14 +338,14 @@ function AdminLayoutContent({ children }) {
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setMobileMenuOpen(false)}></div>
           <div className="relative w-4/5 max-w-sm bg-white dark:bg-black h-full flex flex-col shadow-2xl animate-in slide-in-from-left duration-300">
             <button onClick={() => setMobileMenuOpen(false)} className="absolute top-4 right-4 p-2 bg-gray-100 dark:bg-neutral-900 rounded-full z-50 text-gray-600 dark:text-neutral-400"><X size={20}/></button>
-            <SidebarContent />
+            {sidebarContentUI}
           </div>
         </div>
       )}
 
       {/* ── Desktop Sidebar ────────────────────────────────────────── */}
       <aside className="hidden md:flex fixed top-0 left-0 h-full w-72 bg-white dark:bg-[#050505] border-r border-gray-200 dark:border-neutral-800 flex-col z-30 shadow-[4px_0_24px_rgba(0,0,0,0.02)]">
-        <SidebarContent />
+        {sidebarContentUI}
       </aside>
 
       {/* ── Main content ───────────────────────────────────── */}

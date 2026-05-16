@@ -8,7 +8,7 @@ import {
   MapPin, X, Save, History, FileText, ChevronDown, 
   AlertTriangle, CreditCard, Stethoscope, Briefcase, 
   FileSignature, PowerOff, MoreVertical, Key, Activity, 
-  UploadCloud, Trash2, UserCircle2, ArrowRight, ArrowLeft, CheckCircle2, CalendarDays, Banknote
+  UploadCloud, Trash2, UserCircle2, ArrowRight, ArrowLeft, CheckCircle2, Download
 } from "lucide-react";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "https://your-hostinger-domain.com"; 
@@ -151,8 +151,12 @@ export default function PersonnelCommandPage() {
   
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
   const [profileTab, setProfileTab] = useState("basic");
+  
   const [formData, setFormData] = useState(BLANK_FORM);
+  const [initialFormData, setInitialFormData] = useState(null); // Tracks changes
+  
   const [saving, setSaving] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false); // Controls the green success button
   const [uploadingDoc, setUploadingDoc] = useState(null); 
   const [newDocTitle, setNewDocTitle] = useState("");
 
@@ -275,7 +279,8 @@ export default function PersonnelCommandPage() {
   const openProfile = (user, initialTab = "basic") => {
     setSelectedUser(user);
     const resolvedCap = (user.max_paid_leaves_cap ?? user.max_paid_leaves) ?? 4;
-    setFormData({
+    
+    const parsedData = {
       ...user,
       permissions: safeParse(user.feature_permissions, {}),
       salary: user.monthly_fixed_salary || user.salary || "",
@@ -286,7 +291,11 @@ export default function PersonnelCommandPage() {
       personal_info: safeParse(user.personal_info, BLANK_FORM.personal_info),
       reference_details: safeParse(user.reference_details, BLANK_FORM.reference_details),
       documents: parseDocuments(user.documents) 
-    });
+    };
+
+    setFormData(parsedData);
+    setInitialFormData(parsedData); // Establish baseline for changes
+    setSaveSuccess(false);
     setProfileTab(initialTab);
     setActiveModal("profile");
   };
@@ -308,9 +317,16 @@ export default function PersonnelCommandPage() {
     };
 
     const res = await callApi("update_user", payload);
-    if (res.status === "success") { setActiveModal(null); fetchData(); } 
-    else alert(res.message || "Failed to update profile");
     setSaving(false);
+
+    if (res.status === "success") { 
+      // Do NOT close modal. Just silently update background and show success state.
+      fetchData(); 
+      setInitialFormData(formData); // Reset diff baseline
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 3000);
+    } 
+    else alert(res.message || "Failed to update profile");
   };
 
   const handleFileUpload = async (e, slotType) => {
@@ -333,12 +349,13 @@ export default function PersonnelCommandPage() {
       const result = await response.json();
       
       if (result.status === "success") {
-        const docRecord = { url: result.url, name: result.filename, uploaded_at: new Date().toISOString() };
+        const docRecord = { url: result.url, name: result.filename || file.name, uploaded_at: new Date().toISOString() };
         setFormData(prev => {
-          const updatedDocs = { ...prev.documents };
+          // Deep clone to guarantee React state updates the UI immediately
+          const updatedDocs = JSON.parse(JSON.stringify(prev.documents)); 
           if (slotType === 'front') updatedDocs.aadhaar_front = docRecord;
           else if (slotType === 'back') updatedDocs.aadhaar_back = docRecord;
-          else updatedDocs.others = [...updatedDocs.others, { ...docRecord, title: newDocTitle }];
+          else updatedDocs.others.push({ ...docRecord, title: newDocTitle });
           return { ...prev, documents: updatedDocs };
         });
         setNewDocTitle(""); 
@@ -347,9 +364,16 @@ export default function PersonnelCommandPage() {
     setUploadingDoc(null);
   };
 
-  const removeOtherDocument = (index) => {
-    const newOthers = formData.documents.others.filter((_, i) => i !== index);
-    setFormData({ ...formData, documents: { ...formData.documents, others: newOthers } });
+  const removeDocument = (slotType, index = null) => {
+    setFormData(prev => {
+      const updatedDocs = JSON.parse(JSON.stringify(prev.documents));
+      if (slotType === 'front') updatedDocs.aadhaar_front = null;
+      else if (slotType === 'back') updatedDocs.aadhaar_back = null;
+      else if (slotType === 'other' && index !== null) {
+        updatedDocs.others = updatedDocs.others.filter((_, i) => i !== index);
+      }
+      return { ...prev, documents: updatedDocs };
+    });
   };
 
   const openMonitor = async (user) => {
@@ -493,33 +517,33 @@ export default function PersonnelCommandPage() {
           <div className="flex-1 flex items-center justify-center text-center text-gray-400 font-bold">No active personnel found.</div>
         ) : (
           <div className="w-full overflow-x-auto overflow-y-visible custom-scrollbar pb-32">
-            <table className="w-full text-left min-w-[1100px]">
+            <table className="w-full text-left min-w-[1100px] border-collapse">
               <thead>
-                <tr className="bg-gray-50/80 dark:bg-black border-b border-gray-100 dark:border-neutral-900 text-[10px] font-black text-gray-400 uppercase tracking-widest">
-                  <th className="p-4 sticky left-0 z-10 bg-gray-50/95 dark:bg-black/95 backdrop-blur-sm shadow-[2px_0_8px_rgba(0,0,0,0.05)] border-r border-gray-100 dark:border-neutral-900">Employee</th>
-                  <th className="p-4">Department & Role</th>
-                  <th className="p-4">Contact</th>
-                  <th className="p-4 text-right">Fixed Salary</th>
-                  <th className="p-4 text-center">Leave Cap</th>
-                  <th className="p-4 text-center">Shift Target</th>
+                <tr className="bg-gray-50/80 dark:bg-[#050505] border-b border-gray-300 dark:border-neutral-700 text-[10px] font-black text-gray-400 uppercase tracking-widest">
+                  <th className="p-4 sticky left-0 z-10 bg-gray-50/95 dark:bg-[#050505]/95 backdrop-blur-sm shadow-[2px_0_8px_rgba(0,0,0,0.05)] border-r border-gray-300 dark:border-neutral-700">Employee</th>
+                  <th className="p-4 border-r border-gray-300 dark:border-neutral-700">Department & Role</th>
+                  <th className="p-4 border-r border-gray-300 dark:border-neutral-700">Contact</th>
+                  <th className="p-4 text-right border-r border-gray-300 dark:border-neutral-700">Fixed Salary</th>
+                  <th className="p-4 text-center border-r border-gray-300 dark:border-neutral-700">Leave Cap</th>
+                  <th className="p-4 text-center border-r border-gray-300 dark:border-neutral-700">Shift Target</th>
                   <th className="p-4 text-center">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100 dark:divide-neutral-900">
+              <tbody className="divide-y divide-gray-300 dark:divide-neutral-700">
                 {filteredUsers.map(user => (
                   <tr key={user.id} className={`hover:bg-gray-50/50 dark:hover:bg-neutral-900/30 group transition-colors ${actionMenuId === user.id ? 'relative z-50' : 'relative z-0'}`}>
-                    <td className="p-4 sticky left-0 z-10 bg-white dark:bg-[#0a0a0a] group-hover:bg-gray-50/50 dark:group-hover:bg-[#111] border-r border-gray-100 dark:border-neutral-900 shadow-[2px_0_8px_rgba(0,0,0,0.02)] transition-colors">
+                    <td className="p-4 sticky left-0 z-10 bg-white dark:bg-[#0a0a0a] group-hover:bg-gray-50/50 dark:group-hover:bg-[#111] border-r border-gray-300 dark:border-neutral-700 shadow-[2px_0_8px_rgba(0,0,0,0.02)] transition-colors">
                       <p className="font-black text-sm text-gray-900 dark:text-white mb-0.5">{user.name}</p>
                       <span className={`px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-widest ${user.role === 'manager' ? 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-400' : 'bg-gray-100 text-gray-600 dark:bg-neutral-800 dark:text-neutral-400'}`}>{user.role}</span>
                     </td>
-                    <td className="p-4">
+                    <td className="p-4 border-r border-gray-300 dark:border-neutral-700">
                       <p className="text-sm font-bold text-gray-900 dark:text-white">{user.department || "Unassigned"}</p>
-                      <p className="text-[10px] text-gray-500 uppercase font-bold tracking-widest mt-0.5">{user.designation || user.role}</p>
+                      <p className="text-[10px] text-gray-500 uppercase font-bold tracking-widest mt-0.5">{user.designation || "No Designation"}</p>
                     </td>
-                    <td className="p-4 font-mono text-xs font-bold text-gray-600 dark:text-neutral-400">{user.mobile_number}</td>
-                    <td className="p-4 text-right font-mono font-black text-sm text-gray-900 dark:text-white">₹{parseFloat(user.monthly_fixed_salary || 0).toLocaleString("en-IN")}</td>
-                    <td className="p-4 text-center font-mono font-black text-sm text-blue-600 dark:text-blue-400">{(user.max_paid_leaves_cap ?? user.max_paid_leaves) ?? 4}</td>
-                    <td className="p-4 text-center font-mono font-black text-sm text-gray-600 dark:text-neutral-300">{user.standard_shift_hours || 10}h</td>
+                    <td className="p-4 font-mono text-xs font-bold text-gray-600 dark:text-neutral-400 border-r border-gray-300 dark:border-neutral-700">{user.mobile_number}</td>
+                    <td className="p-4 text-right font-mono font-black text-sm text-gray-900 dark:text-white border-r border-gray-300 dark:border-neutral-700">₹{parseFloat(user.monthly_fixed_salary || 0).toLocaleString("en-IN")}</td>
+                    <td className="p-4 text-center font-mono font-black text-sm text-blue-600 dark:text-blue-400 border-r border-gray-300 dark:border-neutral-700">{(user.max_paid_leaves_cap ?? user.max_paid_leaves) ?? 4}</td>
+                    <td className="p-4 text-center font-mono font-black text-sm text-gray-600 dark:text-neutral-300 border-r border-gray-300 dark:border-neutral-700">{user.standard_shift_hours || 10}h</td>
                     
                     <td className="p-4 text-center relative">
                       <button 
@@ -936,7 +960,7 @@ export default function PersonnelCommandPage() {
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                           
                           {/* Aadhaar Front */}
-                          <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-xl p-4 flex items-center justify-between shadow-sm">
+                          <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-xl p-4 flex items-center justify-between shadow-sm group">
                             <div className="flex items-center gap-3">
                               <div className="w-10 h-10 rounded-lg bg-gray-50 dark:bg-[#111] flex items-center justify-center shrink-0 border border-gray-100 dark:border-neutral-800">
                                 {formData.documents.aadhaar_front ? <CheckCircle2 size={18} className="text-emerald-500" /> : <FileText size={18} className="text-gray-400" />}
@@ -947,17 +971,23 @@ export default function PersonnelCommandPage() {
                             </div>
                             <div className="flex gap-2">
                               {formData.documents.aadhaar_front && (
-                                <a href={`${API_BASE_URL}/${formData.documents.aadhaar_front.url}`} target="_blank" rel="noopener noreferrer" className="p-2 bg-blue-50 dark:bg-blue-900/20 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors"><Search size={14}/></a>
+                                <>
+                                  <a href={`${API_BASE_URL}/${formData.documents.aadhaar_front.url}`} target="_blank" rel="noopener noreferrer" className="p-2 bg-blue-50 dark:bg-blue-900/20 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors" title="View"><Search size={14}/></a>
+                                  <a href={`${API_BASE_URL}/${formData.documents.aadhaar_front.url}`} download className="p-2 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 rounded-lg hover:bg-emerald-100 transition-colors" title="Download"><Download size={14}/></a>
+                                  <button type="button" onClick={() => removeDocument('front')} className="p-2 bg-red-50 dark:bg-red-900/20 text-red-600 rounded-lg hover:bg-red-100 transition-colors" title="Delete"><Trash2 size={14}/></button>
+                                </>
                               )}
-                              <label className="p-2 bg-purple-50 dark:bg-purple-900/20 text-purple-600 rounded-lg hover:bg-purple-100 transition-colors cursor-pointer relative">
-                                {uploadingDoc === 'front' ? <Loader2 size={14} className="animate-spin" /> : <UploadCloud size={14}/>}
-                                <input type="file" className="hidden" onChange={(e) => handleFileUpload(e, 'front')} disabled={uploadingDoc} accept="image/*,.pdf" />
-                              </label>
+                              {!formData.documents.aadhaar_front && (
+                                <label className="p-2 bg-purple-50 dark:bg-purple-900/20 text-purple-600 rounded-lg hover:bg-purple-100 transition-colors cursor-pointer relative" title="Upload">
+                                  {uploadingDoc === 'front' ? <Loader2 size={14} className="animate-spin" /> : <UploadCloud size={14}/>}
+                                  <input type="file" className="hidden" onChange={(e) => handleFileUpload(e, 'front')} disabled={uploadingDoc} accept="image/*,.pdf" />
+                                </label>
+                              )}
                             </div>
                           </div>
 
                           {/* Aadhaar Back */}
-                          <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-xl p-4 flex items-center justify-between shadow-sm">
+                          <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-xl p-4 flex items-center justify-between shadow-sm group">
                             <div className="flex items-center gap-3">
                               <div className="w-10 h-10 rounded-lg bg-gray-50 dark:bg-[#111] flex items-center justify-center shrink-0 border border-gray-100 dark:border-neutral-800">
                                 {formData.documents.aadhaar_back ? <CheckCircle2 size={18} className="text-emerald-500" /> : <FileText size={18} className="text-gray-400" />}
@@ -968,12 +998,18 @@ export default function PersonnelCommandPage() {
                             </div>
                             <div className="flex gap-2">
                               {formData.documents.aadhaar_back && (
-                                <a href={`${API_BASE_URL}/${formData.documents.aadhaar_back.url}`} target="_blank" rel="noopener noreferrer" className="p-2 bg-blue-50 dark:bg-blue-900/20 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors"><Search size={14}/></a>
+                                <>
+                                  <a href={`${API_BASE_URL}/${formData.documents.aadhaar_back.url}`} target="_blank" rel="noopener noreferrer" className="p-2 bg-blue-50 dark:bg-blue-900/20 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors" title="View"><Search size={14}/></a>
+                                  <a href={`${API_BASE_URL}/${formData.documents.aadhaar_back.url}`} download className="p-2 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 rounded-lg hover:bg-emerald-100 transition-colors" title="Download"><Download size={14}/></a>
+                                  <button type="button" onClick={() => removeDocument('back')} className="p-2 bg-red-50 dark:bg-red-900/20 text-red-600 rounded-lg hover:bg-red-100 transition-colors" title="Delete"><Trash2 size={14}/></button>
+                                </>
                               )}
-                              <label className="p-2 bg-purple-50 dark:bg-purple-900/20 text-purple-600 rounded-lg hover:bg-purple-100 transition-colors cursor-pointer relative">
-                                {uploadingDoc === 'back' ? <Loader2 size={14} className="animate-spin" /> : <UploadCloud size={14}/>}
-                                <input type="file" className="hidden" onChange={(e) => handleFileUpload(e, 'back')} disabled={uploadingDoc} accept="image/*,.pdf" />
-                              </label>
+                              {!formData.documents.aadhaar_back && (
+                                <label className="p-2 bg-purple-50 dark:bg-purple-900/20 text-purple-600 rounded-lg hover:bg-purple-100 transition-colors cursor-pointer relative" title="Upload">
+                                  {uploadingDoc === 'back' ? <Loader2 size={14} className="animate-spin" /> : <UploadCloud size={14}/>}
+                                  <input type="file" className="hidden" onChange={(e) => handleFileUpload(e, 'back')} disabled={uploadingDoc} accept="image/*,.pdf" />
+                                </label>
+                              )}
                             </div>
                           </div>
 
@@ -1007,8 +1043,9 @@ export default function PersonnelCommandPage() {
                                   </div>
                                 </div>
                                 <div className="flex items-center gap-1.5 shrink-0">
-                                  <a href={`${API_BASE_URL}/${doc.url}`} target="_blank" rel="noopener noreferrer" className="p-2 text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors"><Search size={14} /></a>
-                                  <button type="button" onClick={() => removeOtherDocument(idx)} className="p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"><Trash2 size={14} /></button>
+                                  <a href={`${API_BASE_URL}/${doc.url}`} target="_blank" rel="noopener noreferrer" className="p-2 text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors" title="View"><Search size={14} /></a>
+                                  <a href={`${API_BASE_URL}/${doc.url}`} download className="p-2 text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 rounded-lg transition-colors" title="Download"><Download size={14} /></a>
+                                  <button type="button" onClick={() => removeDocument('other', idx)} className="p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors" title="Delete"><Trash2 size={14} /></button>
                                 </div>
                               </div>
                             ))
@@ -1023,17 +1060,25 @@ export default function PersonnelCommandPage() {
               </div>
             </div>
 
-            {/* Bottom Actions Panel */}
+            {/* Bottom Actions Panel with SMART SAVE Logic */}
             <div className="p-4 md:p-5 border-t border-gray-100 dark:border-neutral-900 shrink-0 bg-gray-50/50 dark:bg-[#050505] rounded-b-3xl flex justify-between items-center">
               
               {activeModal === 'profile' && (
-                <button type="submit" form="profileForm" disabled={saving || uploadingDoc} className="w-full md:w-auto md:ml-auto px-8 py-3.5 bg-blue-500 hover:bg-blue-600 text-white text-sm font-black rounded-xl shadow-lg shadow-blue-500/20 active:scale-95 transition-all flex items-center justify-center gap-2 disabled:opacity-50">
-                  {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={18} strokeWidth={2.5} />} Save Profile Data
-                </button>
+                <div className="w-full md:w-auto md:ml-auto flex items-center justify-end">
+                  {saveSuccess ? (
+                    <button type="button" disabled className="w-full md:w-auto px-8 py-3.5 bg-emerald-500 text-white text-sm font-black rounded-xl shadow-lg shadow-emerald-500/20 flex items-center justify-center gap-2 animate-in zoom-in-95 duration-200">
+                      <CheckCircle2 size={18} strokeWidth={2.5} /> Changes Saved
+                    </button>
+                  ) : JSON.stringify(formData) !== JSON.stringify(initialFormData) ? (
+                    <button type="submit" form="profileForm" disabled={saving || uploadingDoc} className="w-full md:w-auto px-8 py-3.5 bg-blue-500 hover:bg-blue-600 text-white text-sm font-black rounded-xl shadow-lg shadow-blue-500/20 active:scale-95 transition-all flex items-center justify-center gap-2 disabled:opacity-50 animate-in fade-in">
+                      {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={18} strokeWidth={2.5} />} Save Profile Data
+                    </button>
+                  ) : null}
+                </div>
               )}
 
               {activeModal === 'create' && (
-                <>
+                <div className="w-full flex justify-between">
                   <button type="button" onClick={handlePrevStep} disabled={currentStepIndex === 0} className="px-6 py-3.5 bg-white dark:bg-black border border-gray-200 dark:border-neutral-800 text-gray-700 dark:text-neutral-300 text-sm font-black rounded-xl transition-all disabled:opacity-0 flex items-center gap-2">
                      <ArrowLeft size={16}/> Back
                   </button>
@@ -1047,7 +1092,7 @@ export default function PersonnelCommandPage() {
                       Next Step <ArrowRight size={16} strokeWidth={2.5}/>
                     </button>
                   )}
-                </>
+                </div>
               )}
             </div>
           </div>
@@ -1170,7 +1215,7 @@ export default function PersonnelCommandPage() {
                           <div className="relative pl-4 border-l-2 border-gray-100 dark:border-neutral-800/80 space-y-6">
                             {monitorData.logs.map(log => (
                               <div key={log.id} className="relative">
-                                <div className="absolute -left-[21px] top-1 w-3 h-3 rounded-full ring-4 ring-white dark:ring-[#0a0a0a] bg-purple-500 shadow-sm" />
+                                <div className="absolute -left-[21px] top-1 w-3 h-3 rounded-full ring-4 ring-white dark:bg-[#0a0a0a] bg-purple-500 shadow-sm" />
                                 <div className="pl-2">
                                   <p className="text-sm font-bold text-gray-900 dark:text-neutral-100 mb-1">{log.description}</p>
                                   <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">

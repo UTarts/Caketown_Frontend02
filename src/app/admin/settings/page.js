@@ -38,6 +38,18 @@ export default function AdminSettingsPage() {
   const [deptModal, setDeptModal] = useState(null);
   const [deptSubmitting, setDeptSubmitting] = useState(false);
 
+  // Put this right below your useState declarations
+  useEffect(() => {
+    // Safely read the URL on the client-side to avoid Static Export crashes
+    const params = new URLSearchParams(window.location.search);
+    const tab = params.get('tab');
+    if (tab) {
+      setActiveTab(tab);
+      // Clean up the URL silently so switching tabs manually later feels clean
+      window.history.replaceState(null, '', window.location.pathname);
+    }
+  }, []);
+  
   useEffect(() => {
     const raw = localStorage.getItem("caketown_session");
     if (!raw) return;
