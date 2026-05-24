@@ -182,8 +182,9 @@ export default function BiometricTerminal() {
       setRosterCount(labeledDescriptors.length);
       setSystemMessage({ text: "Starting camera...", type: "loading" });
 
+      // OPTIMIZATION: Reduced ideal resolution to 480p to save massive compute power on mobile devices.
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "user", width: { ideal: 720 }, height: { ideal: 960 } },
+        video: { facingMode: "user", width: { ideal: 480 }, height: { ideal: 640 } },
         audio: false,
       });
 
@@ -204,8 +205,12 @@ export default function BiometricTerminal() {
     }
   };
 
-  const drawPremiumBox = (ctx, box, label, color) => {
-    const { x, y, width, height } = box;
+  // OPTIMIZATION: Modified coordinates to perfectly track the mathematically flipped video feed
+  const drawPremiumBox = (ctx, box, label, color, canvasWidth) => {
+    const { y, width, height } = box;
+    
+    // Mathematically flip the X coordinate so the UI box matches the CSS-mirrored video
+    const x = canvasWidth - box.x - width;
     
     ctx.strokeStyle = color;
     ctx.lineWidth = 4;
@@ -240,8 +245,8 @@ export default function BiometricTerminal() {
       processingRef.current = true;
 
       const displaySize = { 
-        width: video.videoWidth || video.clientWidth || 720, 
-        height: video.videoHeight || video.clientHeight || 960 
+        width: video.videoWidth || video.clientWidth || 480, 
+        height: video.videoHeight || video.clientHeight || 640 
       };
       
       canvas.width = displaySize.width;
@@ -249,7 +254,8 @@ export default function BiometricTerminal() {
       faceapi.matchDimensions(canvas, displaySize);
 
       try {
-        const detection = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 }))
+        // OPTIMIZATION: Dropped inputSize from 320 to 160. This is a 4x reduction in pixel processing load.
+        const detection = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 160, scoreThreshold: 0.5 }))
           .withFaceLandmarks().withFaceDescriptor();
 
         const ctx = canvas.getContext("2d");
@@ -265,7 +271,7 @@ export default function BiometricTerminal() {
         const bestMatch = faceMatcherRef.current.findBestMatch(detection.descriptor);
 
         if (!bestMatch || bestMatch.label === "unknown") {
-          drawPremiumBox(ctx, resized.detection.box, "UNKNOWN", "#ef4444"); 
+          drawPremiumBox(ctx, resized.detection.box, "UNKNOWN", "#ef4444", canvas.width); 
           setSystemMessage({ text: "Face not recognized.", type: "error" });
           processingRef.current = false;
           return;
@@ -285,7 +291,7 @@ export default function BiometricTerminal() {
           const lastDbTime = new Date(dbPerson.last_punch).getTime();
           if (now - lastDbTime < DB_COOLDOWN_MS) {
             const remain = Math.ceil((DB_COOLDOWN_MS - (now - lastDbTime)) / 1000);
-            drawPremiumBox(ctx, resized.detection.box, `WAIT ${remain}s`, "#f59e0b");
+            drawPremiumBox(ctx, resized.detection.box, `WAIT ${remain}s`, "#f59e0b", canvas.width);
             setSystemMessage({ text: `${dbPerson.name}, please wait ${remain}s.`, type: "idle" });
             processingRef.current = false;
             return;
@@ -309,7 +315,7 @@ export default function BiometricTerminal() {
           const punchType = String(res.punch_type).toUpperCase().includes("OUT") ? "OUT" : "IN";
           const color = punchType === "IN" ? "#10b981" : "#f59e0b"; 
           
-          drawPremiumBox(ctx, resized.detection.box, `PUNCH ${punchType}`, color);
+          drawPremiumBox(ctx, resized.detection.box, `PUNCH ${punchType}`, color, canvas.width);
           setSystemMessage({ text: `Success: ${res.user_name} punched ${punchType}`, type: "success" });
           
           await fetchRecentFromDb(session.branch_id, true);
@@ -347,7 +353,9 @@ export default function BiometricTerminal() {
       <div className="w-full md:w-1/2 lg:w-3/5 relative flex flex-col items-center justify-center p-4 md:p-8 border-b md:border-b-0 md:border-r border-gray-200 dark:border-neutral-900 bg-white dark:bg-[#0a0a0a] z-0">
         <div className="w-full max-w-lg aspect-[3/4] md:aspect-auto md:h-[75vh] bg-gray-100 dark:bg-[#111] rounded-[2rem] border border-gray-200 dark:border-neutral-800 overflow-hidden relative shadow-2xl shadow-emerald-500/5">
           
-          <video ref={videoRef} autoPlay muted playsInline onPlay={handleVideoOnPlay} className="absolute inset-0 w-full h-full object-cover md:object-contain bg-gray-900 dark:bg-black z-10" />
+          {/* OPTIMIZATION: Added -scale-x-100 to the video to instantly flip it so it acts like a mirror */}
+          <video ref={videoRef} autoPlay muted playsInline onPlay={handleVideoOnPlay} className="absolute inset-0 w-full h-full object-cover md:object-contain bg-gray-900 dark:bg-black z-10 -scale-x-100" />
+          
           <canvas ref={canvasRef} className="absolute inset-0 w-full h-full object-cover md:object-contain z-20" />
 
           {!terminalActive && (

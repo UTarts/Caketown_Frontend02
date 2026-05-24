@@ -29,7 +29,7 @@ function calcPaidHolidays(daysPresent, cap) {
   return 0;
 }
 
-// ─── UPGRADED MARKER WITH PARTIAL-WORK DOT ─────────────────────────────────
+// ─── UPGRADED MARKER WITH PARTIAL-WORK DOT & OVERRIDE DOT ──────────────────
 function AttendanceMarker({ status, dayData }) {
   const map = {
     F:  { label: "F",  bg: "bg-emerald-100 dark:bg-emerald-500/20", text: "text-emerald-700 dark:text-emerald-400" },
@@ -42,20 +42,23 @@ function AttendanceMarker({ status, dayData }) {
   };
   const m = map[status] || map["-"];
   
-  // If status is Absent, but they have punches (and it's not a manual override)
   const hasPartialWork = status === 'A' && dayData?.punches?.length > 0 && !dayData?.override;
+  const isOverride = dayData?.override;
 
   return (
     <span className={`relative inline-flex items-center justify-center w-6 h-6 sm:w-7 sm:h-7 rounded-lg text-[10px] font-black transition-colors ${m.bg} ${m.text}`}>
       {m.label}
       {hasPartialWork && (
-        <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-orange-500 border border-white dark:border-[#0a0a0a] shadow-sm animate-in zoom-in"></span>
+        <span title="Incomplete Hours" className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-orange-500 border border-white dark:border-[#0a0a0a] shadow-sm animate-in zoom-in"></span>
+      )}
+      {isOverride && (
+        <span title="Admin Override Active" className="absolute -bottom-1 -left-1 w-1.5 h-2 rounded-full bg-blue-500 border border-white dark:border-[#0a0a0a] shadow-sm animate-in zoom-in"></span>
       )}
     </span>
   );
 }
 
-// ─── DAILY PUNCH SUMMARY COMPONENT (FOR OVERRIDE MODAL) ────────────────────
+// ─── DAILY PUNCH SUMMARY COMPONENT ─────────────────────────────────────────
 function DailyPunchSummary({ dayData, date }) {
   if (!dayData || !dayData.punches || dayData.punches.length === 0) {
     return (
@@ -159,10 +162,11 @@ function DailyPunchSummary({ dayData, date }) {
 // ─── MAIN DASHBOARD ────────────────────────────────────────────────────────
 function AttendanceLedgerContent() {
   const searchParams = useSearchParams();
-  const branch_id = searchParams.get("branch_id");
+  const urlBranchId = searchParams.get("branch_id") || "all";
 
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [branchId, setBranchId] = useState(urlBranchId);
   const [activeTab, setActiveTab] = useState("ledger"); 
 
   const now = new Date();
@@ -174,6 +178,10 @@ function AttendanceLedgerContent() {
   const [overrideTarget, setOverrideTarget] = useState(null); 
   const [overrideForm, setOverrideForm] = useState({ status: "F", reason: "" }); 
   const [overrideSubmitting, setOverrideSubmitting] = useState(false);
+  
+  // NEW: Override History States
+  const [overrideHistory, setOverrideHistory] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
 
   const [leaveRequests, setLeaveRequests] = useState([]);
   const [leaveLoading, setLeaveLoading] = useState(false);
@@ -182,6 +190,13 @@ function AttendanceLedgerContent() {
   const [leaveRemark, setLeaveRemark] = useState("");
   const [leaveActionSubmitting, setLeaveActionSubmitting] = useState(false);
 
+  // Sync branch changes from global sidebar
+  useEffect(() => {
+    if (urlBranchId !== branchId) {
+      setBranchId(urlBranchId);
+    }
+  }, [urlBranchId]);
+
   useEffect(() => {
     const raw = localStorage.getItem("caketown_session");
     if (!raw) return;
@@ -189,25 +204,39 @@ function AttendanceLedgerContent() {
   }, []);
 
   const loadAttendance = useCallback(async () => {
-    if (!branch_id) return;
+    if (!branchId || branchId === 'all') return;
     setLoading(true);
-    const res = await callApi("get_monthly_attendance", { branch_id, month: finMonth, year: finYear });
+    const res = await callApi("get_monthly_attendance", { branch_id: branchId, month: finMonth, year: finYear });
     if (res.status === "success") setAttendanceGrid(res.data);
     setLoading(false);
-  }, [branch_id, finMonth, finYear]);
+  }, [branchId, finMonth, finYear]);
 
   const loadLeaveRequests = useCallback(async () => {
-    if (!branch_id) return;
+    if (!branchId || branchId === 'all') return;
     setLeaveLoading(true);
-    const res = await callApi("get_leave_applications", { branch_id, status: 'all' });
+    const res = await callApi("get_leave_applications", { branch_id: branchId, status: 'all' });
     if (res.status === "success") setLeaveRequests(res.data || []);
     setLeaveLoading(false);
-  }, [branch_id]);
+  }, [branchId]);
 
   useEffect(() => { 
     if (activeTab === "ledger") loadAttendance(); 
     else loadLeaveRequests();
   }, [activeTab, loadAttendance, loadLeaveRequests]);
+
+  // Fetch the robust Audit History for the specific cell
+  const fetchOverrideHistory = async (userId, dateStr) => {
+    setHistoryLoading(true);
+    setOverrideHistory([]);
+    const res = await callApi("get_system_logs", { target_user_id: userId, per_page: 100 });
+    if (res.status === "success") {
+      const logs = (res.data || []).filter(l => 
+        l.action_type === 'ATTENDANCE_OVERRIDE' && l.description.includes(dateStr)
+      );
+      setOverrideHistory(logs);
+    }
+    setHistoryLoading(false);
+  };
 
   const handleOverrideSubmit = async (e) => {
     e.preventDefault();
@@ -251,6 +280,16 @@ function AttendanceLedgerContent() {
       alert(res.message || "Failed to update leave status.");
     }
   };
+
+  if (branchId === "all") {
+    return (
+      <div className="flex flex-col items-center justify-center h-[60vh] text-center px-4 animate-in fade-in">
+        <Building2 size={64} className="text-gray-300 dark:text-neutral-700 mb-4" strokeWidth={1.5} />
+        <h2 className="text-2xl font-black text-gray-900 dark:text-white mb-2">Select a Branch</h2>
+        <p className="text-gray-500 font-medium">Please select a specific branch from the global sidebar to view its attendance ledger.</p>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-6 md:gap-8 animate-in fade-in duration-500 pb-24 text-gray-900 dark:text-neutral-200 w-full min-w-0 max-w-full">
@@ -318,8 +357,9 @@ function AttendanceLedgerContent() {
                   </div>
                 ))}
               </div>
-              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest flex items-center gap-1.5 text-right">
-                <span className="w-2.5 h-2.5 rounded-full bg-orange-500 inline-block"></span> Orange dot indicates incomplete hours
+              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest flex flex-wrap items-center gap-3 md:gap-4 md:text-right">
+                <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-orange-500 inline-block"></span> Incomplete Punches</span>
+                <span className="flex items-center gap-1.5"><span className="w-1.5 h-2.5 rounded-full bg-blue-500 inline-block"></span> Admin Override</span>
               </p>
             </div>
 
@@ -377,6 +417,7 @@ function AttendanceLedgerContent() {
                                     const dayData = row.days?.[dateStr] || null;
                                     setOverrideTarget({ user: row, date: dateStr, dayData });
                                     setOverrideForm({ status: status === "F" || status === "P" ? "F" : (status === "-" ? "L" : status), reason: "" }); 
+                                    fetchOverrideHistory(row.id, dateStr); // Fetch robust history on click
                                   }}
                                   className="p-1 text-center border-r border-gray-300 dark:border-neutral-700 transition-colors cursor-pointer hover:bg-blue-50 dark:hover:bg-blue-900/20"
                                 >
@@ -484,7 +525,7 @@ function AttendanceLedgerContent() {
       )}
 
       {/* ══════════════════════════════════════════════════════════════════
-          MODAL: OVERRIDE STATUS (FIXED TO RIGHT SIDE)
+          MODAL: OVERRIDE STATUS WITH FULL AUDIT HISTORY
       ══════════════════════════════════════════════════════════════════ */}
       {overrideTarget && (
         <div className="fixed inset-y-0 right-0 left-0 md:left-72 bg-black/60 dark:bg-black/80 backdrop-blur-sm z-[150] flex items-center justify-center p-4 shadow-[-10px_0_40px_rgba(0,0,0,0.2)]">
@@ -507,11 +548,45 @@ function AttendanceLedgerContent() {
                  </div>
               </div>
 
-              {/* UPGRADED CONTEXTUAL TIMELINE */}
               <div className="mb-6">
                  <h3 className="text-[10px] font-black text-gray-500 dark:text-neutral-400 uppercase tracking-widest mb-3 flex items-center gap-1.5"><Clock size={14} /> Recorded Punches for this date</h3>
                  <DailyPunchSummary dayData={overrideTarget.dayData} date={overrideTarget.date} />
               </div>
+
+              {/* ── CURRENT OVERRIDE STATUS & HISTORY ── */}
+              {(overrideTarget.dayData?.override || overrideHistory.length > 0) && (
+                <div className="mb-6 pt-6 border-t border-gray-100 dark:border-neutral-900">
+                   <h3 className="text-[10px] font-black text-blue-500 uppercase tracking-widest mb-3 flex items-center gap-1.5"><History size={14} /> Override Audit Trail</h3>
+                   
+                   {/* Current Active Override Details */}
+                   {overrideTarget.dayData?.override && (
+                     <div className="bg-blue-50 dark:bg-blue-900/10 border border-blue-200 dark:border-blue-900/50 p-4 rounded-2xl mb-4">
+                       <div className="flex justify-between items-center mb-2">
+                          <span className="text-[10px] font-black text-blue-600 dark:text-blue-400 uppercase tracking-widest">Active Status: {overrideTarget.dayData.status}</span>
+                          <span className="text-[10px] font-bold text-gray-500">By {overrideTarget.dayData.overridden_by || 'Admin'}</span>
+                       </div>
+                       <p className="text-sm font-bold text-gray-800 dark:text-neutral-200">{overrideTarget.dayData.override_reason || 'No reason provided.'}</p>
+                     </div>
+                   )}
+
+                   {/* History Logs */}
+                   {historyLoading ? (
+                      <div className="flex items-center gap-2 text-gray-500 text-xs font-bold"><Loader2 className="animate-spin" size={14}/> Fetching history...</div>
+                   ) : overrideHistory.length > 0 ? (
+                      <div className="space-y-3 mt-2">
+                        {overrideHistory.map(log => (
+                           <div key={log.id} className="relative pl-4 border-l-2 border-gray-100 dark:border-neutral-800/80 ml-2 py-1">
+                             <div className="absolute -left-[5px] top-[14px] w-2 h-2 rounded-full bg-blue-400 shadow-sm" />
+                             <p className="text-xs font-bold text-gray-700 dark:text-neutral-300 leading-relaxed">{log.description}</p>
+                             <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mt-1">
+                               {new Date(log.created_at).toLocaleString("en-IN", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })} • By {log.actor_name || 'System'}
+                             </p>
+                           </div>
+                        ))}
+                      </div>
+                   ) : null}
+                </div>
+              )}
 
               {/* OVERRIDE FORM */}
               <form onSubmit={handleOverrideSubmit} className="space-y-5 pt-6 border-t border-gray-100 dark:border-neutral-900">
@@ -530,7 +605,7 @@ function AttendanceLedgerContent() {
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold text-gray-500 dark:text-neutral-400 uppercase tracking-widest pl-1">Reason (Required for Audit)</label>
+                  <label className="text-[10px] font-bold text-gray-500 dark:text-neutral-400 uppercase tracking-widest pl-1">Reason (Required for Audit Log)</label>
                   <textarea required value={overrideForm.reason} onChange={e => setOverrideForm({...overrideForm, reason: e.target.value})} className="w-full bg-gray-50 dark:bg-[#111] border border-gray-200 dark:border-neutral-800 rounded-2xl px-4 py-3.5 text-sm font-medium text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-blue-500/50 transition-all resize-none h-20 custom-scrollbar" placeholder="e.g. System glitch, approved late entry..." />
                 </div>
 

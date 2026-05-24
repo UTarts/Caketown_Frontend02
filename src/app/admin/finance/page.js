@@ -82,7 +82,7 @@ export default function FinanceLoggingHub() {
     
     if (bRes.status === "success") setBranches(bRes.data || []);
     if (uRes.status === "success") {
-      setUsers((uRes.data || []).filter(u => u.status === 'active' && u.role !== 'admin'));
+    setUsers((uRes.data || []).filter(u => u.status === 'active' && String(u.role).toLowerCase() !== 'admin'));
     }
     if (lRes.status === "success") setLedgerData(lRes.data || []);
     if (aRes.status === "success") setAttendanceData(aRes.data || []);
