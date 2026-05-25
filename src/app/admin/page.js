@@ -27,12 +27,12 @@ const LOG_MAP = {
 };
 
 const TYPE_MAP = {
-  pre_advance: { label: "Pre-Advance", color: "text-orange-600 dark:text-orange-400", bg: "bg-orange-50 dark:bg-orange-500/10", icon: ArrowDownRight },
-  final_advance: { label: "Final Advance", color: "text-orange-600 dark:text-orange-400", bg: "bg-orange-50 dark:bg-orange-500/10", icon: ArrowDownRight },
-  shop_advance: { label: "Shop Adv", color: "text-amber-600 dark:text-amber-400", bg: "bg-amber-50 dark:bg-amber-500/10", icon: ArrowDownRight },
-  shop_bill: { label: "Shop Bill", color: "text-amber-600 dark:text-amber-400", bg: "bg-amber-50 dark:bg-amber-500/10", icon: FileText },
-  fine: { label: "Fine/Penalty", color: "text-red-600 dark:text-red-400", bg: "bg-red-50 dark:bg-red-500/10", icon: AlertTriangle },
-  other: { label: "Other", color: "text-gray-600 dark:text-gray-400", bg: "bg-gray-100 dark:bg-gray-800", icon: Banknote },
+  pre_advance:    { label: "Pre-Advance",    color: "text-orange-600 dark:text-orange-400", bg: "bg-orange-50 dark:bg-orange-500/10",  icon: ArrowDownRight },
+  final_advance:  { label: "Final Advance",  color: "text-orange-600 dark:text-orange-400", bg: "bg-orange-50 dark:bg-orange-500/10",  icon: ArrowDownRight },
+  shop_advance:   { label: "Shop Adv",       color: "text-amber-600 dark:text-amber-400",   bg: "bg-amber-50 dark:bg-amber-500/10",    icon: ArrowDownRight },
+  shop_bill:      { label: "Shop Bill",      color: "text-amber-600 dark:text-amber-400",   bg: "bg-amber-50 dark:bg-amber-500/10",    icon: FileText },
+  fine:           { label: "Fine/Penalty",   color: "text-red-600 dark:text-red-400",       bg: "bg-red-50 dark:bg-red-500/10",        icon: AlertTriangle },
+  other:          { label: "Other",          color: "text-gray-600 dark:text-gray-400",     bg: "bg-gray-100 dark:bg-gray-800",        icon: Banknote },
 };
 
 // ─── HELPERS ───────────────────────────────────────────────────────────────
@@ -41,7 +41,6 @@ function formatLogGroupDate(isoString) {
   const today = new Date();
   const yesterday = new Date(today);
   yesterday.setDate(yesterday.getDate() - 1);
-  
   if (d.toDateString() === today.toDateString()) return "Today";
   if (d.toDateString() === yesterday.toDateString()) return "Yesterday";
   return d.toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" });
@@ -94,7 +93,6 @@ export default function AdminDashboard() {
   const [logsLoading, setLogsLoading] = useState(false);
   const [filterDate, setFilterDate] = useState("");
   
-  // PRESET FILTERS (Financial transactions defaulted)
   const [logBranchFilter, setLogBranchFilter] = useState("all");
   const [logCategoryFilter, setLogCategoryFilter] = useState("financial"); 
 
@@ -191,16 +189,13 @@ export default function AdminDashboard() {
     return stats?.branch_grid?.reduce((acc, b) => acc + (Number(b.present_today) || 0), 0) || 0;
   }, [stats]);
 
-  // SMART FILTERING LOGIC
   const groupedFilteredLogs = useMemo(() => {
     const filtered = logs.filter(log => {
-      // 1. Date Filter
       if (filterDate) {
         const logDate = new Date(log.created_at).toISOString().split('T')[0];
         if (logDate !== filterDate) return false;
       }
       
-      // 2. Branch Filter (Identify branch_id by direct link OR user association)
       let resolvedBranchId = log.branch_id;
       if (!resolvedBranchId && log.user_id) {
          const affectedUser = users.find(u => String(u.id) === String(log.user_id));
@@ -215,7 +210,6 @@ export default function AdminDashboard() {
         }
       }
       
-      // 3. Category Filter
       if (logCategoryFilter === "financial") {
          const t = String(log.action_type).toLowerCase();
          const isFin = t.includes("advance") || t.includes("finance") || t.includes("salary") || t.includes("bill") || t.includes("fine") || t.includes("pay");
@@ -233,7 +227,6 @@ export default function AdminDashboard() {
       let cleanDesc = log.description;
       let branchName = "Global System";
       
-      // Inherit branch_id from the user if it's missing on the log record
       let actualBranchId = log.branch_id;
       if (!actualBranchId && log.user_id) {
          const affectedUser = users.find(u => String(u.id) === String(log.user_id));
@@ -342,8 +335,8 @@ export default function AdminDashboard() {
 
     if (res.status === "success") {
       setFormAmount(""); setFormRemarks("");
-      openUserFinanceModal(activeUserModal); // Refresh their data instantly
-      fetchFeed(); // Refresh the audit log on the dashboard
+      openUserFinanceModal(activeUserModal);
+      fetchFeed();
     } else { alert(res.message || "Failed to log transaction."); }
   };
 
@@ -359,10 +352,10 @@ export default function AdminDashboard() {
   };
 
   return (
-    <div className="space-y-6 md:space-y-8 font-sans pb-24 animate-in fade-in duration-500 overflow-x-hidden">
+    <div className="space-y-5 md:space-y-8 font-sans animate-in fade-in duration-500 overflow-x-hidden">
 
       {/* ── HERO COMMAND HEADER ─────────────────────────────────── */}
-      <div className="relative bg-white/60 dark:bg-[#0a0a0a]/60 backdrop-blur-2xl border border-gray-200/60 dark:border-neutral-800/60 rounded-[2rem] p-6 md:p-8 shadow-sm overflow-hidden flex flex-col md:flex-row md:items-end justify-between gap-6">
+      <div className="relative bg-white/60 dark:bg-[#0a0a0a]/60 backdrop-blur-2xl border border-gray-200/60 dark:border-neutral-800/60 rounded-2xl md:rounded-[2rem] p-5 md:p-8 shadow-sm overflow-hidden flex flex-col md:flex-row md:items-end justify-between gap-4 md:gap-6">
         <div className="absolute top-0 right-0 w-64 h-64 bg-emerald-500/10 rounded-full blur-3xl -mr-20 -mt-20 pointer-events-none"></div>
         <div className="absolute bottom-0 left-0 w-64 h-64 bg-blue-500/10 rounded-full blur-3xl -ml-20 -mb-20 pointer-events-none"></div>
 
@@ -374,41 +367,41 @@ export default function AdminDashboard() {
             </span>
             <span className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-600 dark:text-emerald-500">Global System Online</span>
           </div>
-          <h1 className="text-3xl md:text-5xl font-black text-gray-900 dark:text-white tracking-tight leading-tight">
+          <h1 className="text-2xl sm:text-3xl md:text-5xl font-black text-gray-900 dark:text-white tracking-tight leading-tight">
             System Overview.
           </h1>
-          <p className="text-sm text-gray-500 dark:text-neutral-400 mt-2 font-bold flex items-center gap-2">
-            <Clock size={15} className="text-emerald-500" />
+          <p className="text-xs sm:text-sm text-gray-500 dark:text-neutral-400 mt-2 font-bold flex items-center gap-2">
+            <Clock size={14} className="text-emerald-500 shrink-0" />
             {now.toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long" })} • {now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true })}
           </p>
         </div>
 
-        <button onClick={() => { fetchDashboardAndLive(); fetchFeed(); }} disabled={loading || logsLoading} className="relative z-10 flex items-center justify-center gap-2 px-6 py-3.5 rounded-2xl bg-gray-900 dark:bg-white text-white dark:text-black font-black text-sm hover:bg-gray-800 dark:hover:bg-gray-200 transition-all shadow-xl shadow-gray-900/20 dark:shadow-white/10 active:scale-95 disabled:opacity-50 w-full md:w-auto">
+        <button
+          onClick={() => { fetchDashboardAndLive(); fetchFeed(); }}
+          disabled={loading || logsLoading}
+          className="relative z-10 flex items-center justify-center gap-2 px-5 py-3 rounded-2xl bg-gray-900 dark:bg-white text-white dark:text-black font-black text-sm hover:bg-gray-800 dark:hover:bg-gray-200 transition-all shadow-xl shadow-gray-900/20 dark:shadow-white/10 active:scale-95 disabled:opacity-50 w-full md:w-auto min-h-[48px]"
+        >
           <RefreshCw size={16} strokeWidth={3} className={loading || logsLoading ? "animate-spin" : ""} />
           {loading || logsLoading ? "Synchronizing..." : "Sync Network"}
         </button>
       </div>
 
       {/* ── GLOBAL TELEMETRY ────────────────────── */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-5">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 md:gap-5">
         
-        <div className="relative overflow-hidden bg-gradient-to-br from-blue-500 to-indigo-600 rounded-3xl p-6 shadow-lg shadow-blue-500/20 flex flex-col justify-between text-white group">
-          <div className="absolute -right-6 -top-6 opacity-20 transform group-hover:scale-110 transition-transform duration-500"><Users size={140} /></div>
+        <div className="relative overflow-hidden bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl md:rounded-3xl p-5 md:p-6 shadow-lg shadow-blue-500/20 flex flex-col justify-between text-white group">
+          <div className="absolute -right-6 -top-6 opacity-20 transform group-hover:scale-110 transition-transform duration-500"><Users size={120} /></div>
           <div className="relative z-10">
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-[10px] font-black uppercase tracking-widest text-blue-100">Total Workforce</p>
-            </div>
+            <p className="text-[10px] font-black uppercase tracking-widest text-blue-100 mb-2">Total Workforce</p>
             <p className="text-4xl md:text-5xl font-black tabular-nums tracking-tight">{loading ? "—" : totalEmployees}</p>
             <p className="text-xs font-bold text-blue-100 mt-2 opacity-90">Across {stats?.branch_grid?.length || 0} active branches</p>
           </div>
         </div>
 
-        <div className="relative overflow-hidden bg-gradient-to-br from-emerald-400 to-teal-600 rounded-3xl p-6 shadow-lg shadow-emerald-500/20 flex flex-col justify-between text-white group">
-          <div className="absolute -right-6 -top-6 opacity-20 transform group-hover:scale-110 transition-transform duration-500"><UserCheck size={140} /></div>
+        <div className="relative overflow-hidden bg-gradient-to-br from-emerald-400 to-teal-600 rounded-2xl md:rounded-3xl p-5 md:p-6 shadow-lg shadow-emerald-500/20 flex flex-col justify-between text-white group">
+          <div className="absolute -right-6 -top-6 opacity-20 transform group-hover:scale-110 transition-transform duration-500"><UserCheck size={120} /></div>
           <div className="relative z-10 flex flex-col h-full justify-between">
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-[10px] font-black uppercase tracking-widest text-emerald-100">Live Attendance</p>
-            </div>
+            <p className="text-[10px] font-black uppercase tracking-widest text-emerald-100 mb-2">Live Attendance</p>
             <div>
               <p className="text-4xl md:text-5xl font-black tabular-nums tracking-tight">{loading ? "—" : presentToday}</p>
               <p className="text-xs font-bold text-emerald-100 mt-2 opacity-90">Present on floor today</p>
@@ -416,19 +409,23 @@ export default function AdminDashboard() {
           </div>
         </div>
 
-        <div className="relative overflow-hidden bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-3xl p-6 shadow-sm flex flex-col justify-between">
+        <div className="relative overflow-hidden bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-2xl md:rounded-3xl p-5 md:p-6 shadow-sm flex flex-col justify-between">
           <div className="relative z-10 flex flex-col h-full">
-            <div className="flex items-center justify-between mb-4">
-              <p className="text-[10px] font-black uppercase tracking-widest text-gray-500 dark:text-gray-400">Command Shortcuts</p>
-            </div>
+            <p className="text-[10px] font-black uppercase tracking-widest text-gray-500 dark:text-gray-400 mb-3">Command Shortcuts</p>
             <div className="grid grid-cols-2 gap-3 flex-1">
-              <button onClick={() => setSearchModalOpen(true)} className="flex flex-col items-center justify-center p-3 bg-orange-50 dark:bg-orange-500/10 hover:bg-orange-100 dark:hover:bg-orange-500/20 text-orange-600 dark:text-orange-400 rounded-2xl transition-colors text-center active:scale-95">
-                <Banknote size={20} className="mb-2" strokeWidth={2.5}/>
-                <span className="text-[10px] font-black uppercase tracking-widest">Log Advance</span>
+              <button
+                onClick={() => setSearchModalOpen(true)}
+                className="flex flex-col items-center justify-center p-3 bg-orange-50 dark:bg-orange-500/10 hover:bg-orange-100 dark:hover:bg-orange-500/20 text-orange-600 dark:text-orange-400 rounded-2xl transition-colors text-center active:scale-95 min-h-[72px]"
+              >
+                <Banknote size={20} className="mb-1.5" strokeWidth={2.5}/>
+                <span className="text-[10px] font-black uppercase tracking-widest leading-tight">Log Advance</span>
               </button>
-              <Link href="/admin/personnel" className="flex flex-col items-center justify-center p-3 bg-blue-50 dark:bg-blue-500/10 hover:bg-blue-100 dark:hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 rounded-2xl transition-colors text-center active:scale-95">
-                <Users size={20} className="mb-2" strokeWidth={2.5}/>
-                <span className="text-[10px] font-black uppercase tracking-widest">Add Staff</span>
+              <Link
+                href="/admin/personnel"
+                className="flex flex-col items-center justify-center p-3 bg-blue-50 dark:bg-blue-500/10 hover:bg-blue-100 dark:hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 rounded-2xl transition-colors text-center active:scale-95 min-h-[72px]"
+              >
+                <Users size={20} className="mb-1.5" strokeWidth={2.5}/>
+                <span className="text-[10px] font-black uppercase tracking-widest leading-tight">Add Staff</span>
               </Link>
             </div>
           </div>
@@ -436,19 +433,19 @@ export default function AdminDashboard() {
 
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-[1.2fr_0.8fr] gap-6 md:gap-8">
+      <div className="grid grid-cols-1 xl:grid-cols-[1.2fr_0.8fr] gap-5 md:gap-8">
         
         {/* ── BRANCH SURVEILLANCE DATA WIDGETS ─────────────────────────────────── */}
-        <div className="space-y-5 flex flex-col h-[700px]">
+        <div className="space-y-4 flex flex-col xl:h-[700px]">
           <div className="flex items-center justify-between px-1 shrink-0">
             <h2 className="text-sm font-black text-gray-900 dark:text-white uppercase tracking-widest flex items-center gap-2">
               <Building2 size={16} className="text-blue-500" /> Operational Branches
             </h2>
           </div>
 
-          <div className="flex-1 overflow-y-auto custom-scrollbar min-h-0 space-y-6 pb-6">
+          <div className="flex-1 overflow-y-auto custom-scrollbar min-h-0 space-y-5 pb-4">
             {loading ? (
-               <div className="flex justify-center py-20"><Loader2 className="animate-spin text-blue-500" size={32} /></div>
+               <div className="flex justify-center py-16"><Loader2 className="animate-spin text-blue-500" size={32} /></div>
             ) : stats?.branch_grid?.length === 0 ? (
                <div className="bg-white dark:bg-[#0a0a0a] border border-dashed border-gray-200 dark:border-neutral-800 rounded-3xl p-10 text-center text-gray-400 font-bold text-sm">No branches configured.</div>
             ) : (
@@ -458,44 +455,45 @@ export default function AdminDashboard() {
                 const activePeople = liveData[branch.id]?.filter(p => p.status === 'working' || p.status === 'on_break') || [];
                 
                 return (
-                  <div key={branch.id} className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-[2rem] shadow-sm overflow-hidden flex flex-col shrink-0">
+                  <div key={branch.id} className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-2xl md:rounded-[2rem] shadow-sm overflow-hidden flex flex-col shrink-0">
                     
-                    <div className="p-6 md:p-8 flex items-start justify-between border-b border-gray-100 dark:border-neutral-900 bg-gray-50/30 dark:bg-[#111]/30">
-                      <div className="min-w-0 pr-4">
+                    <div className="p-5 md:p-8 flex items-start justify-between border-b border-gray-100 dark:border-neutral-900 bg-gray-50/30 dark:bg-[#111]/30">
+                      <div className="min-w-0 pr-3">
                         <div className="flex items-center gap-2 mb-1.5">
                           <span className="px-2 py-0.5 rounded-md text-[9px] font-black bg-gray-200 dark:bg-neutral-800 text-gray-600 dark:text-neutral-400 uppercase tracking-widest">{branch.branch_code || "Active"}</span>
                         </div>
-                        <h3 className="font-black text-2xl text-gray-900 dark:text-white truncate">{branch.branch_name}</h3>
+                        <h3 className="font-black text-xl md:text-2xl text-gray-900 dark:text-white truncate">{branch.branch_name}</h3>
                         <p className="text-xs font-medium text-gray-500 dark:text-neutral-400 mt-1 flex items-center gap-1.5 truncate"><MapPin size={12}/> {branch.address || "Location unassigned"}</p>
                       </div>
                       
-                      <div className="flex items-center gap-6 shrink-0">
-                         <div className="text-right hidden sm:block">
-                           <p className="text-xl font-black text-gray-900 dark:text-white tabular-nums leading-none">{total}</p>
-                           <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1.5">Total Staff</p>
+                      <div className="flex items-center gap-4 shrink-0">
+                         <div className="text-right">
+                           <p className="text-lg md:text-xl font-black text-gray-900 dark:text-white tabular-nums leading-none">{total}</p>
+                           <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">Staff</p>
                          </div>
-                         <div className="text-right hidden sm:block">
-                           <p className="text-xl font-black text-emerald-600 dark:text-emerald-400 tabular-nums leading-none">{present}</p>
-                           <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1.5">Present</p>
+                         <div className="text-right">
+                           <p className="text-lg md:text-xl font-black text-emerald-600 dark:text-emerald-400 tabular-nums leading-none">{present}</p>
+                           <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">Present</p>
                          </div>
                       </div>
                     </div>
 
-                    <div className="w-full overflow-x-auto custom-scrollbar">
+                    {/* Horizontal scroll for personnel table on mobile */}
+                    <div className="table-mobile-scroll">
                       {activePeople.length === 0 ? (
-                        <div className="p-10 flex flex-col items-center justify-center text-center opacity-50">
-                           <Users size={32} className="text-gray-400 mb-3" />
+                        <div className="p-8 md:p-10 flex flex-col items-center justify-center text-center opacity-50">
+                           <Users size={28} className="text-gray-400 mb-3" />
                            <p className="text-sm font-bold text-gray-500">No personnel currently on the floor.</p>
                         </div>
                       ) : (
-                        <table className="w-full text-left min-w-[600px]">
+                        <table className="w-full text-left min-w-[560px]">
                           <thead>
                             <tr className="bg-gray-50/50 dark:bg-[#050505] border-b border-gray-300 dark:border-neutral-700 text-[9px] font-black text-gray-400 uppercase tracking-widest">
-                              <th className="p-4 border-r border-gray-300 dark:border-neutral-700">Personnel</th>
-                              <th className="p-4 text-center border-r border-gray-300 dark:border-neutral-700">First In</th>
-                              <th className="p-4 text-center border-r border-gray-300 dark:border-neutral-700">Last Out</th>
-                              <th className="p-4 text-right border-r border-gray-300 dark:border-neutral-700">Work Time</th>
-                              <th className="p-4 text-right">Break Time</th>
+                              <th className="p-3 md:p-4 border-r border-gray-300 dark:border-neutral-700">Personnel</th>
+                              <th className="p-3 md:p-4 text-center border-r border-gray-300 dark:border-neutral-700">First In</th>
+                              <th className="p-3 md:p-4 text-center border-r border-gray-300 dark:border-neutral-700">Last Out</th>
+                              <th className="p-3 md:p-4 text-right border-r border-gray-300 dark:border-neutral-700">Work</th>
+                              <th className="p-3 md:p-4 text-right">Break</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-gray-300 dark:divide-neutral-700">
@@ -524,7 +522,7 @@ export default function AdminDashboard() {
 
                               return (
                                 <tr key={person.id} className="hover:bg-gray-50 dark:hover:bg-neutral-900/30 transition-colors">
-                                  <td className="p-4 border-r border-gray-300 dark:border-neutral-700">
+                                  <td className="p-3 md:p-4 border-r border-gray-300 dark:border-neutral-700">
                                     <div className="flex items-center gap-2">
                                       <span className={`w-2 h-2 rounded-full ${isWorking ? 'bg-emerald-500 animate-pulse' : 'bg-yellow-500'} shrink-0`}></span>
                                       <div>
@@ -533,12 +531,18 @@ export default function AdminDashboard() {
                                       </div>
                                     </div>
                                   </td>
-                                  <td className="p-4 border-r border-gray-300 dark:border-neutral-700 text-center font-mono text-xs text-gray-600 dark:text-neutral-400 flex items-center justify-center gap-1.5"><LogIn size={12} className="text-gray-400"/> {formatTime(strictFirstPunch)}</td>
-                                  <td className="p-4 border-r border-gray-300 dark:border-neutral-700 text-center font-mono text-xs text-gray-600 dark:text-neutral-400">{isWorking ? <span className="text-emerald-500 font-black text-[10px] uppercase tracking-widest animate-pulse">Active</span> : formatTime(strictLastPunch)}</td>
-                                  <td className="p-4 border-r border-gray-300 dark:border-neutral-700 text-right font-mono font-black text-sm text-emerald-600 dark:text-emerald-400">{formatDuration(workMins)}</td>
-                                  <td className="p-4 text-right font-mono font-black text-sm text-red-500 dark:text-red-400">{formatDuration(breakMins)}</td>
+                                  <td className="p-3 md:p-4 border-r border-gray-300 dark:border-neutral-700 text-center">
+                                    <span className="font-mono text-xs text-gray-600 dark:text-neutral-400 flex items-center justify-center gap-1">
+                                      <LogIn size={11} className="text-gray-400"/> {formatTime(strictFirstPunch)}
+                                    </span>
+                                  </td>
+                                  <td className="p-3 md:p-4 border-r border-gray-300 dark:border-neutral-700 text-center font-mono text-xs text-gray-600 dark:text-neutral-400">
+                                    {isWorking ? <span className="text-emerald-500 font-black text-[10px] uppercase tracking-widest animate-pulse">Active</span> : formatTime(strictLastPunch)}
+                                  </td>
+                                  <td className="p-3 md:p-4 border-r border-gray-300 dark:border-neutral-700 text-right font-mono font-black text-sm text-emerald-600 dark:text-emerald-400">{formatDuration(workMins)}</td>
+                                  <td className="p-3 md:p-4 text-right font-mono font-black text-sm text-red-500 dark:text-red-400">{formatDuration(breakMins)}</td>
                                 </tr>
-                              )
+                              );
                             })}
                           </tbody>
                         </table>
@@ -551,8 +555,8 @@ export default function AdminDashboard() {
           </div>
         </div>
 
-        {/* ── SMART SYSTEM FEED (FINANCE & ADMIN LOGS ONLY) ────────────────────────── */}
-        <div className="space-y-4 flex flex-col h-[700px]">
+        {/* ── SMART SYSTEM FEED ────────────────────────── */}
+        <div className="space-y-4 flex flex-col xl:h-[700px]">
           <div className="flex items-center justify-between px-1 shrink-0">
             <h2 className="text-sm font-black text-gray-900 dark:text-white uppercase tracking-widest flex items-center gap-2">
               <History size={16} className="text-purple-500" /> Admin Audit Log
@@ -561,16 +565,24 @@ export default function AdminDashboard() {
 
           <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-3xl shadow-sm flex flex-col flex-1 overflow-hidden min-h-0">
             
-            <div className="p-3 md:p-4 border-b border-gray-100 dark:border-neutral-900 bg-gray-50/50 dark:bg-neutral-900/20 flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
+            <div className="p-3 border-b border-gray-100 dark:border-neutral-900 bg-gray-50/50 dark:bg-neutral-900/20 flex flex-col gap-2 shrink-0">
               
-              {/* Presets and Filters */}
-              <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-                <select value={logCategoryFilter} onChange={e => setLogCategoryFilter(e.target.value)} className="bg-white dark:bg-[#111] border border-gray-200 dark:border-neutral-800 rounded-xl px-3 py-2 text-[10px] font-black uppercase tracking-widest text-gray-700 dark:text-neutral-300 outline-none cursor-pointer shadow-sm">
+              {/* Category + Branch filters */}
+              <div className="flex items-center gap-2 w-full">
+                <select
+                  value={logCategoryFilter}
+                  onChange={e => setLogCategoryFilter(e.target.value)}
+                  className="flex-1 bg-white dark:bg-[#111] border border-gray-200 dark:border-neutral-800 rounded-xl px-3 py-2.5 text-[10px] font-black uppercase tracking-widest text-gray-700 dark:text-neutral-300 outline-none cursor-pointer shadow-sm min-h-[40px]"
+                >
                   <option value="financial">Finance Logs</option>
                   <option value="system">Admin & System</option>
                   <option value="all">All Activities</option>
                 </select>
-                <select value={logBranchFilter} onChange={e => setLogBranchFilter(e.target.value)} className="bg-white dark:bg-[#111] border border-gray-200 dark:border-neutral-800 rounded-xl px-3 py-2 text-[10px] font-black uppercase tracking-widest text-gray-700 dark:text-neutral-300 outline-none cursor-pointer shadow-sm">
+                <select
+                  value={logBranchFilter}
+                  onChange={e => setLogBranchFilter(e.target.value)}
+                  className="flex-1 bg-white dark:bg-[#111] border border-gray-200 dark:border-neutral-800 rounded-xl px-3 py-2.5 text-[10px] font-black uppercase tracking-widest text-gray-700 dark:text-neutral-300 outline-none cursor-pointer shadow-sm min-h-[40px]"
+                >
                   <option value="all">All Branches</option>
                   <option value="global">Global Changes</option>
                   {branches.map(b => <option key={b.id} value={b.id}>{b.branch_name}</option>)}
@@ -578,37 +590,46 @@ export default function AdminDashboard() {
               </div>
               
               {/* Date Pagination */}
-              <div className="flex items-center gap-1 bg-white dark:bg-[#111] border border-gray-200 dark:border-neutral-800 rounded-xl p-1 shrink-0 shadow-sm w-full sm:w-auto justify-between sm:justify-start">
-                <button onClick={handlePrevDay} className="p-1.5 hover:bg-gray-100 dark:hover:bg-neutral-800 rounded-lg transition-colors text-gray-500"><ChevronLeft size={16}/></button>
-                <div className="relative">
-                  <input type="date" value={filterDate} onChange={e => setFilterDate(e.target.value)} className="bg-transparent text-[10px] md:text-xs font-black text-gray-700 dark:text-neutral-300 outline-none cursor-pointer w-24 text-center leading-none" />
+              <div className="flex items-center gap-1 bg-white dark:bg-[#111] border border-gray-200 dark:border-neutral-800 rounded-xl p-1 shadow-sm w-full">
+                <button onClick={handlePrevDay} className="p-2 hover:bg-gray-100 dark:hover:bg-neutral-800 rounded-lg transition-colors text-gray-500 min-w-[36px] min-h-[36px] flex items-center justify-center"><ChevronLeft size={16}/></button>
+                <div className="flex-1 flex justify-center">
+                  <input
+                    type="date"
+                    value={filterDate}
+                    onChange={e => setFilterDate(e.target.value)}
+                    className="bg-transparent text-xs font-black text-gray-700 dark:text-neutral-300 outline-none cursor-pointer text-center w-full"
+                  />
                 </div>
-                <button onClick={handleNextDay} disabled={!filterDate} className="p-1.5 hover:bg-gray-100 dark:hover:bg-neutral-800 rounded-lg transition-colors text-gray-500 disabled:opacity-30"><ChevronRight size={16}/></button>
-                {filterDate && <button onClick={clearDate} className="p-1.5 hover:bg-red-100 dark:hover:bg-red-900/30 text-red-500 rounded-lg transition-colors ml-1"><X size={14}/></button>}
+                <button onClick={handleNextDay} disabled={!filterDate} className="p-2 hover:bg-gray-100 dark:hover:bg-neutral-800 rounded-lg transition-colors text-gray-500 disabled:opacity-30 min-w-[36px] min-h-[36px] flex items-center justify-center"><ChevronRight size={16}/></button>
+                {filterDate && (
+                  <button onClick={clearDate} className="p-2 hover:bg-red-100 dark:hover:bg-red-900/30 text-red-500 rounded-lg transition-colors min-w-[36px] min-h-[36px] flex items-center justify-center">
+                    <X size={14}/>
+                  </button>
+                )}
               </div>
 
             </div>
 
-            <div className="flex-1 overflow-y-auto custom-scrollbar p-5 md:p-8">
+            <div className="flex-1 overflow-y-auto custom-scrollbar p-4 md:p-6">
               {logsLoading ? (
                 <div className="flex justify-center py-20"><Loader2 className="animate-spin text-purple-500" size={28} /></div>
               ) : Object.keys(groupedFilteredLogs).length === 0 ? (
-                <div className="flex flex-col items-center justify-center text-center py-24 opacity-50">
-                  <FileText size={40} className="mb-4 text-gray-400" />
+                <div className="flex flex-col items-center justify-center text-center py-16 opacity-50">
+                  <FileText size={36} className="mb-4 text-gray-400" />
                   <p className="text-base font-black text-gray-900 dark:text-white">No logs found</p>
-                  <p className="text-sm font-bold text-gray-500 mt-1">No administrative activity matches your current filters.</p>
-                  <button onClick={clearDate} className="px-4 py-2 bg-gray-100 dark:bg-neutral-800 rounded-lg text-xs font-black text-gray-600 dark:text-neutral-300 mt-4 hover:bg-gray-200 transition-colors">Clear Filters</button>
+                  <p className="text-sm font-bold text-gray-500 mt-1">No activity matches your filters.</p>
+                  <button onClick={clearDate} className="px-4 py-2.5 bg-gray-100 dark:bg-neutral-800 rounded-lg text-xs font-black text-gray-600 dark:text-neutral-300 mt-4 hover:bg-gray-200 transition-colors min-h-[40px]">Clear Filters</button>
                 </div>
               ) : (
-                <div className="space-y-8 pb-safe">
+                <div className="space-y-8">
                   {Object.entries(groupedFilteredLogs).map(([dateLabel, logGroup]) => (
                     <div key={dateLabel}>
-                      <div className="flex items-center gap-4 mb-5 sticky top-0 bg-white/90 dark:bg-[#0a0a0a]/90 backdrop-blur-sm z-10 py-1 -mt-1">
-                        <span className="text-[10px] font-black uppercase tracking-widest text-gray-500 bg-gray-100 dark:bg-neutral-900 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-neutral-800">{dateLabel}</span>
+                      <div className="flex items-center gap-3 mb-4 sticky top-0 bg-white/90 dark:bg-[#0a0a0a]/90 backdrop-blur-sm z-10 py-1 -mt-1">
+                        <span className="text-[10px] font-black uppercase tracking-widest text-gray-500 bg-gray-100 dark:bg-neutral-900 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-neutral-800 whitespace-nowrap">{dateLabel}</span>
                         <div className="h-px bg-gray-100 dark:bg-neutral-800 flex-1"></div>
                       </div>
                       
-                      <div className="relative pl-4 md:pl-6 border-l-2 border-gray-100 dark:border-neutral-800/80 space-y-6">
+                      <div className="relative pl-4 md:pl-6 border-l-2 border-gray-100 dark:border-neutral-800/80 space-y-5">
                         {logGroup.map((log) => {
                           const style = LOG_MAP[log.action_type] || LOG_MAP.default;
                           return (
@@ -617,18 +638,18 @@ export default function AdminDashboard() {
                               
                               <div className="pl-2 md:pl-3">
                                 <p className="text-sm font-bold text-gray-900 dark:text-neutral-100 leading-snug mb-2">{log.description}</p>
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <span className={`px-2.5 py-1 rounded-md text-[9px] font-black uppercase tracking-widest ${style.bg} ${style.color}`}>
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <span className={`px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-widest ${style.bg} ${style.color}`}>
                                     {style.label}
                                   </span>
-                                  <span className="px-2.5 py-1 rounded-md text-[9px] font-black uppercase tracking-widest bg-gray-100 dark:bg-neutral-800 text-gray-600 dark:text-neutral-400 border border-gray-200 dark:border-neutral-700">
+                                  <span className="px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-widest bg-gray-100 dark:bg-neutral-800 text-gray-600 dark:text-neutral-400 border border-gray-200 dark:border-neutral-700">
                                     {log.branchName}
                                   </span>
-                                  <span className="text-[10px] font-bold text-gray-400 tabular-nums ml-1">
+                                  <span className="text-[10px] font-bold text-gray-400 tabular-nums">
                                     {new Date(log.created_at).toLocaleTimeString("en-IN", { hour: '2-digit', minute: '2-digit', hour12: true })}
                                   </span>
                                   {log.actor_name && (
-                                    <span className="text-[10px] font-bold text-gray-500 flex items-center gap-1.5 border-l border-gray-200 dark:border-neutral-800 pl-2 ml-1">
+                                    <span className="text-[10px] font-bold text-gray-500 flex items-center gap-1 border-l border-gray-200 dark:border-neutral-800 pl-2">
                                       By <span className="text-gray-700 dark:text-neutral-300">{log.actor_name}</span>
                                     </span>
                                   )}
@@ -647,31 +668,36 @@ export default function AdminDashboard() {
         </div>
       </div>
 
-      {/* ══════════════════════════════════════════════════════════════════
-          GLOBAL SEARCH MODAL (Triggered by 'Log Advance' Shortcut)
-      ══════════════════════════════════════════════════════════════════ */}
+      {/* ══════════════════════════════════════════════════════
+          GLOBAL SEARCH MODAL
+      ══════════════════════════════════════════════════════ */}
       {searchModalOpen && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[150] flex items-end md:items-center justify-center sm:p-4 shadow-[-10px_0_40px_rgba(0,0,0,0.2)]">
-          <div className="bg-white dark:bg-[#0a0a0a] w-full max-w-2xl max-h-[85vh] rounded-t-3xl md:rounded-3xl shadow-2xl animate-in slide-in-from-bottom-full md:zoom-in-95 duration-200 flex flex-col border border-gray-200 dark:border-neutral-800 overflow-hidden">
-            <div className="p-4 border-b border-gray-100 dark:border-neutral-900 bg-gray-50/50 dark:bg-[#111] shrink-0 flex items-center gap-3">
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[150] flex items-end md:items-center justify-center md:p-4">
+          <div className="bg-white dark:bg-[#0a0a0a] w-full max-w-2xl max-h-[88vh] md:max-h-[85vh] rounded-t-3xl md:rounded-3xl shadow-2xl animate-in slide-in-from-bottom-full md:zoom-in-95 duration-200 flex flex-col border border-gray-200 dark:border-neutral-800 overflow-hidden">
+            <div className="p-3 md:p-4 border-b border-gray-100 dark:border-neutral-900 bg-gray-50/50 dark:bg-[#111] shrink-0 flex items-center gap-3">
               <div className="flex-1 relative">
-                <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
+                <Search size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
                 <input 
                   autoFocus
                   value={globalSearchQuery} 
                   onChange={(e) => setGlobalSearchQuery(e.target.value)} 
                   placeholder="Search by name, branch, or department..." 
-                  className="w-full bg-white dark:bg-black border border-gray-200 dark:border-neutral-800 rounded-xl py-3 pl-11 pr-4 text-sm font-bold text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-orange-500/50 transition-all shadow-sm" 
+                  className="w-full bg-white dark:bg-black border border-gray-200 dark:border-neutral-800 rounded-xl py-3 pl-10 pr-4 text-sm font-bold text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-orange-500/50 transition-all shadow-sm" 
                 />
               </div>
-              <button onClick={() => { setSearchModalOpen(false); setGlobalSearchQuery(""); }} className="p-3 bg-gray-100 dark:bg-neutral-900 rounded-xl hover:bg-gray-200 transition-colors text-gray-600 dark:text-neutral-400"><X size={18} /></button>
+              <button
+                onClick={() => { setSearchModalOpen(false); setGlobalSearchQuery(""); }}
+                className="p-3 bg-gray-100 dark:bg-neutral-900 rounded-xl hover:bg-gray-200 transition-colors text-gray-600 dark:text-neutral-400 min-w-[44px] min-h-[44px] flex items-center justify-center"
+              >
+                <X size={18} />
+              </button>
             </div>
             
-            <div className="flex-1 overflow-y-auto custom-scrollbar p-2">
+            <div className="flex-1 overflow-y-auto custom-scrollbar p-2 max-h-[60vh]">
               {globalFilteredUsers.length === 0 ? (
-                 <div className="flex flex-col items-center justify-center py-16 text-center opacity-50">
-                    <Users size={32} className="text-gray-400 mb-3" />
-                    <p className="text-sm font-bold text-gray-500">No personnel found matching your search.</p>
+                 <div className="flex flex-col items-center justify-center py-14 text-center opacity-50">
+                    <Users size={30} className="text-gray-400 mb-3" />
+                    <p className="text-sm font-bold text-gray-500">No personnel found.</p>
                  </div>
               ) : (
                 <div className="space-y-1">
@@ -681,7 +707,7 @@ export default function AdminDashboard() {
                       <button 
                         key={u.id} 
                         onClick={() => openUserFinanceModal(u)}
-                        className="w-full flex items-center justify-between p-3 md:p-4 hover:bg-orange-50 dark:hover:bg-orange-500/10 rounded-xl transition-colors text-left group"
+                        className="w-full flex items-center justify-between p-3 md:p-4 hover:bg-orange-50 dark:hover:bg-orange-500/10 rounded-xl transition-colors text-left group min-h-[60px]"
                       >
                         <div className="flex items-center gap-3 min-w-0">
                           <div className="w-10 h-10 rounded-full bg-gray-100 dark:bg-neutral-900 flex items-center justify-center shrink-0 border border-gray-200 dark:border-neutral-800">
@@ -692,12 +718,12 @@ export default function AdminDashboard() {
                             <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest truncate">{branchName} • {u.department || 'Staff'}</p>
                           </div>
                         </div>
-                        <div className="text-right shrink-0">
+                        <div className="text-right shrink-0 ml-2">
                           <p className="font-mono text-xs font-bold text-gray-500">{u.mobile_number}</p>
                           <span className="text-[10px] font-black text-orange-500 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-end gap-1 mt-0.5">Select <ArrowDownRight size={12}/></span>
                         </div>
                       </button>
-                    )
+                    );
                   })}
                 </div>
               )}
@@ -706,14 +732,14 @@ export default function AdminDashboard() {
         </div>
       )}
 
-      {/* ══════════════════════════════════════════════════════════════════
+      {/* ══════════════════════════════════════════════════════
           FINANCE LOGGING MODAL
-      ══════════════════════════════════════════════════════════════════ */}
+      ══════════════════════════════════════════════════════ */}
       {activeUserModal && (
-        <div className="fixed inset-0 bg-black/60 dark:bg-black/80 backdrop-blur-sm z-[150] flex items-end md:items-center justify-center sm:p-4 shadow-[-10px_0_40px_rgba(0,0,0,0.2)]">
-          <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 w-full max-w-4xl max-h-[90vh] rounded-t-3xl md:rounded-3xl shadow-2xl animate-in slide-in-from-bottom-full md:zoom-in-95 duration-200 flex flex-col overflow-hidden">
+        <div className="fixed inset-0 bg-black/60 dark:bg-black/80 backdrop-blur-sm z-[150] flex items-end md:items-center justify-center md:p-4">
+          <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 w-full max-w-4xl max-h-[92vh] md:max-h-[90vh] rounded-t-3xl md:rounded-3xl shadow-2xl animate-in slide-in-from-bottom-full md:zoom-in-95 duration-200 flex flex-col overflow-hidden">
             
-            <div className="p-5 border-b border-gray-100 dark:border-neutral-900 flex justify-between items-center bg-gray-50/50 dark:bg-[#111] shrink-0">
+            <div className="p-4 md:p-5 border-b border-gray-100 dark:border-neutral-900 flex justify-between items-center bg-gray-50/50 dark:bg-[#111] shrink-0">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-orange-50 dark:bg-orange-900/10 text-orange-500 flex items-center justify-center shrink-0">
                   <UserCircle size={20} strokeWidth={2.5} />
@@ -723,25 +749,33 @@ export default function AdminDashboard() {
                   <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-0.5">Finance Profile</p>
                 </div>
               </div>
-              <button onClick={() => { setActiveUserModal(null); setFormAmount(""); setFormRemarks(""); }} className="p-2 bg-gray-100 dark:bg-neutral-900 rounded-full hover:bg-gray-200 transition-colors text-gray-600 dark:text-neutral-400"><X size={16} /></button>
+              <button
+                onClick={() => { setActiveUserModal(null); setFormAmount(""); setFormRemarks(""); }}
+                className="p-2.5 bg-gray-100 dark:bg-neutral-900 rounded-full hover:bg-gray-200 transition-colors text-gray-600 dark:text-neutral-400 min-w-[40px] min-h-[40px] flex items-center justify-center"
+              >
+                <X size={16} />
+              </button>
             </div>
             
             {activeUserModal.loading ? (
-               <div className="flex justify-center items-center py-32"><Loader2 className="animate-spin text-orange-500" size={32} /></div>
+               <div className="flex justify-center items-center py-28"><Loader2 className="animate-spin text-orange-500" size={32} /></div>
             ) : (
               <div className="flex flex-col md:flex-row flex-1 overflow-hidden min-h-0">
                 
-                {/* LEFT SIDE: LOG FORM */}
-                <div className="w-full md:w-1/2 border-b md:border-b-0 md:border-r border-gray-100 dark:border-neutral-900 p-5 md:p-6 overflow-y-auto custom-scrollbar bg-white dark:bg-[#0a0a0a]">
+                {/* LEFT: LOG FORM */}
+                <div className="w-full md:w-1/2 border-b md:border-b-0 md:border-r border-gray-100 dark:border-neutral-900 p-4 md:p-6 overflow-y-auto custom-scrollbar bg-white dark:bg-[#0a0a0a] max-h-[45vh] md:max-h-none">
                   
-                  <div className="mb-6 p-4 bg-gray-50 dark:bg-[#111] rounded-2xl border border-gray-200 dark:border-neutral-800">
+                  <div className="mb-5 p-4 bg-gray-50 dark:bg-[#111] rounded-2xl border border-gray-200 dark:border-neutral-800">
                     <div className="flex items-center justify-between mb-3">
                       <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest">30% Dynamic Limit</p>
                       <p className="font-mono text-xs font-black text-gray-900 dark:text-white">Max: {formatCurrency(activeUserModal.maxAdv)}</p>
                     </div>
                     
                     <div className="w-full h-2.5 bg-gray-200 dark:bg-neutral-800 rounded-full overflow-hidden flex mb-2">
-                      <div style={{ width: `${Math.min((activeUserModal.takenAdv / activeUserModal.maxAdv) * 100, 100)}%` }} className="h-full bg-orange-500 transition-all"></div>
+                      <div
+                        style={{ width: `${Math.min((activeUserModal.takenAdv / activeUserModal.maxAdv) * 100, 100)}%` }}
+                        className="h-full bg-orange-500 transition-all"
+                      ></div>
                     </div>
                     
                     <div className="flex justify-between items-center text-[10px] font-bold">
@@ -750,16 +784,16 @@ export default function AdminDashboard() {
                     </div>
                     
                     <div className="mt-3 pt-3 border-t border-gray-200 dark:border-neutral-800 flex justify-between items-center">
-                      <p className="text-[9px] font-bold text-gray-400">Calculated on Net Earned: <span className="text-gray-700 dark:text-neutral-300 font-mono">{formatCurrency(activeUserModal.netPayable)}</span></p>
+                      <p className="text-[9px] font-bold text-gray-400">Net Earned: <span className="text-gray-700 dark:text-neutral-300 font-mono">{formatCurrency(activeUserModal.netPayable)}</span></p>
                     </div>
                   </div>
 
                   {['pre_advance', 'final_advance', 'shop_advance'].includes(formType) && parseFloat(formAmount || 0) > activeUserModal.availAdv && (
-                    <div className="mb-6 p-3 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-900/50 rounded-xl flex items-start gap-2 animate-in fade-in zoom-in-95">
+                    <div className="mb-5 p-3 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-900/50 rounded-xl flex items-start gap-2 animate-in fade-in zoom-in-95">
                       <Unlock size={14} className="text-red-500 mt-0.5 shrink-0" />
                       <div>
                         <p className="text-[10px] font-black text-red-700 dark:text-red-400 uppercase tracking-widest mb-0.5">Admin Override Active</p>
-                        <p className="text-[10px] font-bold text-red-600/80 dark:text-red-400/80 leading-snug">This amount exceeds the dynamic 30% limit. Managers require approval for this, but as an Admin, you may proceed.</p>
+                        <p className="text-[10px] font-bold text-red-600/80 dark:text-red-400/80 leading-snug">Exceeds 30% limit. Managers require approval, but as Admin you may proceed.</p>
                       </div>
                     </div>
                   )}
@@ -768,7 +802,12 @@ export default function AdminDashboard() {
                     <div className="space-y-1.5">
                       <label className="text-[10px] font-bold text-gray-500 dark:text-neutral-400 uppercase tracking-widest pl-1">Transaction Type</label>
                       <div className="relative">
-                        <select required value={formType} onChange={(e) => setFormType(e.target.value)} className="w-full bg-white dark:bg-black border border-gray-200 dark:border-neutral-800 rounded-xl px-4 py-3 text-sm font-bold text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-orange-500/50 appearance-none cursor-pointer">
+                        <select
+                          required
+                          value={formType}
+                          onChange={(e) => setFormType(e.target.value)}
+                          className="w-full bg-white dark:bg-black border border-gray-200 dark:border-neutral-800 rounded-xl px-4 py-3 text-base font-bold text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-orange-500/50 appearance-none cursor-pointer min-h-[48px]"
+                        >
                           {Object.entries(TYPE_MAP).map(([val, cfg]) => (
                             <option key={val} value={val}>{cfg.label}</option>
                           ))}
@@ -781,33 +820,54 @@ export default function AdminDashboard() {
                       <label className="text-[10px] font-bold text-gray-500 dark:text-neutral-400 uppercase tracking-widest pl-1">Amount</label>
                       <div className="relative">
                         <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-black font-mono">₹</span>
-                        <input required type="number" step="0.01" min="1" value={formAmount} onChange={(e) => setFormAmount(e.target.value)} placeholder="0.00" className="w-full bg-orange-50 dark:bg-orange-900/10 border border-orange-200 dark:border-orange-900/30 rounded-xl py-3 pl-8 pr-4 text-base font-black font-mono text-orange-700 dark:text-orange-400 outline-none focus:ring-2 focus:ring-orange-500/50" />
+                        <input
+                          required
+                          type="number"
+                          step="0.01"
+                          min="1"
+                          value={formAmount}
+                          onChange={(e) => setFormAmount(e.target.value)}
+                          placeholder="0.00"
+                          className="w-full bg-orange-50 dark:bg-orange-900/10 border border-orange-200 dark:border-orange-900/30 rounded-xl py-3 pl-8 pr-4 text-base font-black font-mono text-orange-700 dark:text-orange-400 outline-none focus:ring-2 focus:ring-orange-500/50 min-h-[48px]"
+                        />
                       </div>
                     </div>
 
                     <div className="space-y-1.5">
                       <label className="text-[10px] font-bold text-gray-500 dark:text-neutral-400 uppercase tracking-widest pl-1">Mandatory Remarks</label>
-                      <textarea required value={formRemarks} onChange={(e) => setFormRemarks(e.target.value)} placeholder="Reason for this transaction..." className="w-full bg-white dark:bg-black border border-gray-200 dark:border-neutral-800 rounded-xl px-4 py-3 text-sm font-medium text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-orange-500/50 resize-none h-20 custom-scrollbar" />
+                      <textarea
+                        required
+                        value={formRemarks}
+                        onChange={(e) => setFormRemarks(e.target.value)}
+                        placeholder="Reason for this transaction..."
+                        className="w-full bg-white dark:bg-black border border-gray-200 dark:border-neutral-800 rounded-xl px-4 py-3 text-sm font-medium text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-orange-500/50 resize-none h-20 custom-scrollbar"
+                      />
                     </div>
 
-                    <button type="submit" disabled={formSubmitting} className="w-full py-3.5 bg-gray-900 hover:bg-black dark:bg-white dark:hover:bg-gray-200 text-white dark:text-black text-xs font-black uppercase tracking-widest rounded-xl transition-all shadow-lg active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-2 mt-4">
+                    <button
+                      type="submit"
+                      disabled={formSubmitting}
+                      className="w-full py-3.5 bg-gray-900 hover:bg-black dark:bg-white dark:hover:bg-gray-200 text-white dark:text-black text-xs font-black uppercase tracking-widest rounded-xl transition-all shadow-lg active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-2 min-h-[52px]"
+                    >
                       {formSubmitting ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} strokeWidth={3} />}
                       Submit Record
                     </button>
                   </form>
                 </div>
 
-                {/* RIGHT SIDE: PERSONAL HISTORY */}
-                <div className="w-full md:w-1/2 p-5 md:p-6 overflow-y-auto custom-scrollbar bg-gray-50/50 dark:bg-[#050505]">
-                  <h3 className="text-xs font-black uppercase tracking-widest text-gray-400 mb-5 flex items-center gap-2"><History size={14} className="text-blue-500" /> Current Month History</h3>
+                {/* RIGHT: TRANSACTION HISTORY */}
+                <div className="w-full md:w-1/2 p-4 md:p-6 overflow-y-auto custom-scrollbar bg-gray-50/50 dark:bg-[#050505] max-h-[45vh] md:max-h-none">
+                  <h3 className="text-xs font-black uppercase tracking-widest text-gray-400 mb-4 flex items-center gap-2">
+                    <History size={14} className="text-blue-500" /> Current Month History
+                  </h3>
                   
                   {activeUserModal.txns.length === 0 ? (
                     <div className="flex flex-col items-center justify-center py-10 text-center opacity-50">
-                      <History size={32} className="text-gray-400 mb-3" />
+                      <History size={28} className="text-gray-400 mb-3" />
                       <p className="text-sm font-bold text-gray-500">No transactions recorded.</p>
                     </div>
                   ) : (
-                    <div className="space-y-3 pb-safe">
+                    <div className="space-y-3">
                       {activeUserModal.txns.map(txn => {
                         const T = TYPE_MAP[txn.type] || TYPE_MAP.other;
                         return (
@@ -817,16 +877,20 @@ export default function AdminDashboard() {
                                 <span className={`inline-flex px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-widest border ${T.bg} ${T.color} border-current opacity-80 mb-1`}>{T.label}</span>
                                 <p className={`font-mono font-black text-lg leading-none ${T.color}`}>{formatCurrency(txn.amount)}</p>
                               </div>
-                              <button onClick={() => handleVoidRecord(txn.id)} disabled={formSubmitting} className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg transition-colors">
+                              <button
+                                onClick={() => handleVoidRecord(txn.id)}
+                                disabled={formSubmitting}
+                                className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg transition-colors min-w-[36px] min-h-[36px] flex items-center justify-center"
+                              >
                                 <Trash2 size={14} />
                               </button>
                             </div>
                             <p className="text-xs font-bold text-gray-600 dark:text-neutral-400 mb-3 leading-snug">{txn.remarks}</p>
                             <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest border-t border-gray-50 dark:border-neutral-900 pt-2">
-                              Logged: {new Date(txn.created_at).toLocaleDateString('en-IN', {month:'short', day:'numeric'})} by {txn.logged_by_name || 'System'}
+                              {new Date(txn.created_at).toLocaleDateString('en-IN', {month:'short', day:'numeric'})} by {txn.logged_by_name || 'System'}
                             </p>
                           </div>
-                        )
+                        );
                       })}
                     </div>
                   )}

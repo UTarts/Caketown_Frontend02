@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useState, useRef, Suspense } from "react";
-import { useRouter, usePathname } from "next/navigation"; 
+import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import {
-  LayoutDashboard, Building2, Users, Settings, LogOut, Banknote, Sun, Moon, 
+  LayoutDashboard, Building2, Users, Settings, LogOut, Banknote, Sun, Moon,
   ChevronRight, Activity, CalendarDays, History, Menu, X, UserCircle2, Shield, ExternalLink, FileText, ChevronDown, CalendarRange
 } from "lucide-react";
 import { callApi, logout } from "@/lib/apiClient";
@@ -12,20 +12,18 @@ import { callApi, logout } from "@/lib/apiClient";
 function AdminLayoutContent({ children }) {
   const router = useRouter();
   const pathname = usePathname();
-  
+
   const [user, setUser] = useState(null);
   const [dark, setDark] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
 
-  // Global Context State
   const [branches, setBranches] = useState([]);
   const [activeBranchId, setActiveBranchId] = useState("");
   const [branchesLoading, setBranchesLoading] = useState(true);
 
   const profileMenuRef = useRef(null);
 
-  // Dropdown states for sidebar
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [reportsOpen, setReportsOpen] = useState(false);
 
@@ -48,7 +46,6 @@ function AdminLayoutContent({ children }) {
   useEffect(() => {
     const session = localStorage.getItem("caketown_session");
     if (!session) { router.push("/"); return; }
-    
     try {
       const parsed = JSON.parse(session);
       if (parsed.role !== "admin") { router.push("/"); return; }
@@ -58,28 +55,22 @@ function AdminLayoutContent({ children }) {
     }
   }, [router]);
 
-  // Fetch branches for the Global Switcher
   useEffect(() => {
     const fetchBranches = async () => {
       setBranchesLoading(true);
       const res = await callApi("get_branches");
       if (res.status === "success" && res.data?.length > 0) {
-        
-        const activeBranches = res.data; 
+        const activeBranches = res.data;
         setBranches(activeBranches);
-        
-        // STATIC-EXPORT SAFE URL READING
         const params = new URLSearchParams(window.location.search);
         const urlBranchId = params.get("branch_id");
-
         if (urlBranchId && activeBranches.some(b => String(b.id) === urlBranchId)) {
           setActiveBranchId(urlBranchId);
         } else if (activeBranches.length > 0) {
           const defaultId = String(activeBranches[0].id);
           setActiveBranchId(defaultId);
-          // If on a branch-specific page without an ID, force redirect to set the ID
           if (pathname !== "/admin" && !pathname.startsWith("/admin/settings") && !pathname.startsWith("/admin/reports") && pathname !== "/admin/profile") {
-             router.replace(`${pathname}?branch_id=${defaultId}`);
+            router.replace(`${pathname}?branch_id=${defaultId}`);
           }
         }
       }
@@ -91,8 +82,6 @@ function AdminLayoutContent({ children }) {
   const handleBranchChange = (e) => {
     const newId = e.target.value;
     setActiveBranchId(newId);
-    
-    // If the user is currently on a branch-specific page, update the URL parameter
     if (pathname !== "/admin" && !pathname.startsWith("/admin/settings") && !pathname.startsWith("/admin/reports") && pathname !== "/admin/profile") {
       router.push(`${pathname}?branch_id=${newId}`);
     }
@@ -111,7 +100,6 @@ function AdminLayoutContent({ children }) {
 
   const initials = user.name.split(" ").map(n => n[0]).join("").substring(0, 2).toUpperCase();
 
-  // ─── ENTERPRISE NAVIGATION STRUCTURE ───
   const globalNav = [
     { name: "Admin Dashboard", path: "/admin", icon: LayoutDashboard, exact: true },
   ];
@@ -137,7 +125,6 @@ function AdminLayoutContent({ children }) {
     { name: "Attendance Pulse", icon: Activity, targetTab: "attendance" }
   ];
 
-  // Mobile Bottom Quick-Access Dock
   const mobileBottomNav = [
     { name: "Overview", path: "/admin", icon: LayoutDashboard, exact: true },
     { name: "Floor", path: `/admin/live-floor?branch_id=${activeBranchId}`, icon: Activity },
@@ -161,18 +148,13 @@ function AdminLayoutContent({ children }) {
     router.push(`/admin/reports?tab=${tab}`);
   };
 
-  // ─── FIXED: CHANGED FROM A COMPONENT TO A STATIC VARIABLE ───
-  // This prevents React from destroying and recreating the sidebar on state changes!
   const sidebarContentUI = (
     <>
-      {/* Premium Diagonal Logo Container */}
       <div className="h-24 w-full bg-white dark:bg-[#050505] shadow-[0_2px_15px_rgba(0,0,0,0.03)] shrink-0 flex flex-col justify-center px-6 relative z-10" style={{ clipPath: 'polygon(0 0, 100% 0, 100% 85%, 0 100%)' }}>
-         <img src="/logo.png" alt="Caketown" className="h-10 w-auto object-contain object-center" onError={(e) => { e.target.style.display='none'; }}/>
+        <img src="/logo.png" alt="Caketown" className="h-10 w-auto object-contain object-center" onError={(e) => { e.target.style.display = 'none'; }} />
       </div>
 
       <nav className="flex-1 overflow-y-auto custom-scrollbar px-4 py-5 space-y-6">
-        
-        {/* Global Section Pushed to Top */}
         <div>
           <p className="px-3 text-[9px] font-black text-gray-400 uppercase tracking-widest mb-2">Global Administration</p>
           <div className="space-y-1">
@@ -189,9 +171,8 @@ function AdminLayoutContent({ children }) {
           </div>
         </div>
 
-        {/* Dynamic Branch Context Switcher */}
         <div className="bg-emerald-50/50 dark:bg-emerald-900/10 border border-emerald-100 dark:border-emerald-900/30 rounded-2xl p-3">
-          <p className="text-[9px] font-black text-emerald-600 dark:text-emerald-500 uppercase tracking-widest mb-1.5 px-1 flex items-center gap-1.5"><Building2 size={12}/> Active Branch</p>
+          <p className="text-[9px] font-black text-emerald-600 dark:text-emerald-500 uppercase tracking-widest mb-1.5 px-1 flex items-center gap-1.5"><Building2 size={12} /> Active Branch</p>
           <div className="relative">
             {branchesLoading ? (
               <div className="h-10 flex items-center justify-center text-xs text-emerald-600 font-bold animate-pulse bg-white dark:bg-black rounded-xl">Loading...</div>
@@ -206,7 +187,6 @@ function AdminLayoutContent({ children }) {
           </div>
         </div>
 
-        {/* Branch Operations */}
         <div>
           <p className="px-3 text-[9px] font-black text-gray-400 uppercase tracking-widest mb-2">Branch Operations</p>
           <div className="space-y-1">
@@ -223,69 +203,59 @@ function AdminLayoutContent({ children }) {
           </div>
         </div>
 
-        {/* Global Bottom Section (Settings & Reports) */}
         <div>
-           <p className="px-3 text-[9px] font-black text-gray-400 uppercase tracking-widest mb-2">System Config</p>
-           <div className="space-y-1">
-              
-              {/* Settings Dropdown */}
-              <div>
-                 <button onClick={() => setSettingsOpen(!settingsOpen)} className={`w-full flex items-center justify-between px-3 py-3 rounded-xl transition-all duration-200 font-bold text-sm ${pathname.startsWith('/admin/settings') ? "bg-gray-100 dark:bg-neutral-800 text-gray-900 dark:text-white" : "text-gray-600 dark:text-neutral-400 hover:bg-gray-50 dark:hover:bg-neutral-900 hover:text-gray-900 dark:hover:text-white"}`}>
-                   <div className="flex items-center gap-3">
-                     <Settings size={16} className={pathname.startsWith('/admin/settings') ? 'text-gray-900 dark:text-white' : ''} strokeWidth={pathname.startsWith('/admin/settings') ? 2.5 : 2} />
-                     <span>Master Settings</span>
-                   </div>
-                   <ChevronDown size={14} className={`transition-transform duration-200 ${settingsOpen ? 'rotate-180' : ''}`} />
-                 </button>
-                 {settingsOpen && (
-                   <div className="mt-1 ml-4 pl-3 border-l-2 border-gray-100 dark:border-neutral-800 space-y-1 overflow-hidden animate-in slide-in-from-top-2">
-                     {settingsDropdown.map(item => (
-                       <button key={item.targetTab} onClick={() => handleSettingsClick(item.targetTab)} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 font-bold text-xs text-gray-500 hover:bg-gray-50 dark:hover:bg-neutral-900 hover:text-gray-900 dark:hover:text-white text-left">
-                         <item.icon size={14} /> {item.name}
-                       </button>
-                     ))}
-                   </div>
-                 )}
-              </div>
-
-              {/* Reports Dropdown */}
-              <div>
-                 <button onClick={() => setReportsOpen(!reportsOpen)} className={`w-full flex items-center justify-between px-3 py-3 rounded-xl transition-all duration-200 font-bold text-sm ${pathname.startsWith('/admin/reports') ? "bg-gray-100 dark:bg-neutral-800 text-gray-900 dark:text-white" : "text-gray-600 dark:text-neutral-400 hover:bg-gray-50 dark:hover:bg-neutral-900 hover:text-gray-900 dark:hover:text-white"}`}>
-                   <div className="flex items-center gap-3">
-                     <FileText size={16} className={pathname.startsWith('/admin/reports') ? 'text-gray-900 dark:text-white' : ''} strokeWidth={pathname.startsWith('/admin/reports') ? 2.5 : 2} />
-                     <span>Global Reports</span>
-                   </div>
-                   <ChevronDown size={14} className={`transition-transform duration-200 ${reportsOpen ? 'rotate-180' : ''}`} />
-                 </button>
-                 {reportsOpen && (
-                   <div className="mt-1 ml-4 pl-3 border-l-2 border-gray-100 dark:border-neutral-800 space-y-1 overflow-hidden animate-in slide-in-from-top-2">
-                     {reportsDropdown.map(item => (
-                       <button key={item.targetTab} onClick={() => handleReportsClick(item.targetTab)} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 font-bold text-xs text-gray-500 hover:bg-gray-50 dark:hover:bg-neutral-900 hover:text-gray-900 dark:hover:text-white text-left">
-                         <item.icon size={14} /> {item.name}
-                       </button>
-                     ))}
-                   </div>
-                 )}
-              </div>
-
-           </div>
+          <p className="px-3 text-[9px] font-black text-gray-400 uppercase tracking-widest mb-2">System Config</p>
+          <div className="space-y-1">
+            <div>
+              <button onClick={() => setSettingsOpen(!settingsOpen)} className={`w-full flex items-center justify-between px-3 py-3 rounded-xl transition-all duration-200 font-bold text-sm ${pathname.startsWith('/admin/settings') ? "bg-gray-100 dark:bg-neutral-800 text-gray-900 dark:text-white" : "text-gray-600 dark:text-neutral-400 hover:bg-gray-50 dark:hover:bg-neutral-900 hover:text-gray-900 dark:hover:text-white"}`}>
+                <div className="flex items-center gap-3">
+                  <Settings size={16} className={pathname.startsWith('/admin/settings') ? 'text-gray-900 dark:text-white' : ''} strokeWidth={pathname.startsWith('/admin/settings') ? 2.5 : 2} />
+                  <span>Master Settings</span>
+                </div>
+                <ChevronDown size={14} className={`transition-transform duration-200 ${settingsOpen ? 'rotate-180' : ''}`} />
+              </button>
+              {settingsOpen && (
+                <div className="mt-1 ml-4 pl-3 border-l-2 border-gray-100 dark:border-neutral-800 space-y-1 overflow-hidden animate-in slide-in-from-top-2">
+                  {settingsDropdown.map(item => (
+                    <button key={item.targetTab} onClick={() => handleSettingsClick(item.targetTab)} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 font-bold text-xs text-gray-500 hover:bg-gray-50 dark:hover:bg-neutral-900 hover:text-gray-900 dark:hover:text-white text-left">
+                      <item.icon size={14} /> {item.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div>
+              <button onClick={() => setReportsOpen(!reportsOpen)} className={`w-full flex items-center justify-between px-3 py-3 rounded-xl transition-all duration-200 font-bold text-sm ${pathname.startsWith('/admin/reports') ? "bg-gray-100 dark:bg-neutral-800 text-gray-900 dark:text-white" : "text-gray-600 dark:text-neutral-400 hover:bg-gray-50 dark:hover:bg-neutral-900 hover:text-gray-900 dark:hover:text-white"}`}>
+                <div className="flex items-center gap-3">
+                  <FileText size={16} className={pathname.startsWith('/admin/reports') ? 'text-gray-900 dark:text-white' : ''} strokeWidth={pathname.startsWith('/admin/reports') ? 2.5 : 2} />
+                  <span>Global Reports</span>
+                </div>
+                <ChevronDown size={14} className={`transition-transform duration-200 ${reportsOpen ? 'rotate-180' : ''}`} />
+              </button>
+              {reportsOpen && (
+                <div className="mt-1 ml-4 pl-3 border-l-2 border-gray-100 dark:border-neutral-800 space-y-1 overflow-hidden animate-in slide-in-from-top-2">
+                  {reportsDropdown.map(item => (
+                    <button key={item.targetTab} onClick={() => handleReportsClick(item.targetTab)} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 font-bold text-xs text-gray-500 hover:bg-gray-50 dark:hover:bg-neutral-900 hover:text-gray-900 dark:hover:text-white text-left">
+                      <item.icon size={14} /> {item.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </nav>
 
       <div className="p-4 border-t border-gray-100 dark:border-neutral-800 shrink-0 bg-white dark:bg-black z-10 flex items-center justify-between relative" ref={profileMenuRef}>
-        
-        {/* User Avatar Clickable */}
         <button onClick={() => setProfileMenuOpen(!profileMenuOpen)} className="flex items-center gap-3 hover:bg-gray-50 dark:hover:bg-neutral-900 p-1.5 rounded-xl transition-colors text-left min-w-0 flex-1">
           <div className="w-10 h-10 rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 flex items-center justify-center font-black text-sm border border-emerald-200 dark:border-emerald-800 shrink-0">
             {initials}
           </div>
           <div className="overflow-hidden flex-1 min-w-0">
             <p className="text-sm font-black text-gray-900 dark:text-white truncate">{user.name}</p>
-            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest truncate flex items-center gap-1"><Shield size={10}/> Admin</p>
+            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest truncate flex items-center gap-1"><Shield size={10} /> Admin</p>
           </div>
         </button>
-
-        {/* UT Arts Branding */}
         <div className="shrink-0 flex flex-col items-end justify-center pl-2 border-l border-gray-100 dark:border-neutral-800">
           <span className="text-[8px] font-black text-gray-400 uppercase tracking-widest mb-0.5">Powered By</span>
           <a href="https://www.utarts.in" target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 hover:opacity-80 transition-opacity">
@@ -293,8 +263,6 @@ function AdminLayoutContent({ children }) {
             <span className="font-black text-xs text-emerald-600 dark:text-emerald-400">UT Arts</span>
           </a>
         </div>
-
-        {/* Pop-up Profile Menu */}
         {profileMenuOpen && (
           <div className="absolute bottom-[110%] left-4 right-4 bg-white dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-2xl shadow-xl p-2 mb-2 animate-in slide-in-from-bottom-2 duration-200 z-50">
             <Link href="/admin/profile" onClick={() => setProfileMenuOpen(false)} className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-bold text-gray-700 dark:text-neutral-300 hover:bg-gray-50 dark:hover:bg-neutral-900 transition-colors">
@@ -314,58 +282,64 @@ function AdminLayoutContent({ children }) {
   );
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-[#050505] selection:bg-emerald-500 selection:text-white flex">
+    /*
+     * THE ROOT FIX IS HERE:
+     * overflow-x-hidden on the outermost wrapper.
+     * This is the single source of truth — no child element,
+     * no matter how wide its internal min-width, can push
+     * the page body wider than the viewport.
+     */
+    <div className="min-h-screen bg-gray-50 dark:bg-[#050505] selection:bg-emerald-500 selection:text-white flex overflow-x-hidden">
 
-      {/* ── Mobile Top Header ──────────────── */}
+      {/* ── Mobile Top Header ── */}
       <div className="md:hidden fixed top-0 left-0 right-0 z-40 bg-white/80 dark:bg-black/80 backdrop-blur-xl border-b border-gray-200 dark:border-neutral-800 h-16 flex items-center justify-between shadow-sm px-4">
-        {/* Mobile Diagonal Logo Container */}
         <div className="absolute top-0 left-0 h-16 w-48 bg-white shadow-[2px_0_10px_rgba(0,0,0,0.1)] z-10 flex flex-col justify-center px-4" style={{ clipPath: 'polygon(0 0, 100% 0, 85% 100%, 0 100%)' }}>
-          <img src="/logo.png" alt="Caketown" className="h-6 w-auto object-contain object-left" onError={(e) => { e.target.style.display='none'; }}/>
+          <img src="/logo.png" alt="Caketown" className="h-6 w-auto object-contain object-left" onError={(e) => { e.target.style.display = 'none'; }} />
           <span className="text-[8px] text-emerald-600 font-black uppercase tracking-widest mt-0.5">Admin</span>
         </div>
-        
         <div className="flex-1"></div>
-        
-        {/* Quick Profile Access on Mobile Header */}
         <Link href="/admin/profile" className="z-20 w-8 h-8 rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 flex items-center justify-center font-black text-xs border border-emerald-200 dark:border-emerald-800 shadow-sm">
           {initials}
         </Link>
       </div>
 
-      {/* ── Mobile Slide-out Drawer ──────────────── */}
+      {/* ── Mobile Slide-out Drawer ── */}
       {mobileMenuOpen && (
         <div className="md:hidden fixed inset-0 z-[100] flex">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setMobileMenuOpen(false)}></div>
           <div className="relative w-4/5 max-w-sm bg-white dark:bg-black h-full flex flex-col shadow-2xl animate-in slide-in-from-left duration-300">
-            <button onClick={() => setMobileMenuOpen(false)} className="absolute top-4 right-4 p-2 bg-gray-100 dark:bg-neutral-900 rounded-full z-50 text-gray-600 dark:text-neutral-400"><X size={20}/></button>
+            <button onClick={() => setMobileMenuOpen(false)} className="absolute top-4 right-4 p-2 bg-gray-100 dark:bg-neutral-900 rounded-full z-50 text-gray-600 dark:text-neutral-400"><X size={20} /></button>
             {sidebarContentUI}
           </div>
         </div>
       )}
 
-      {/* ── Desktop Sidebar ────────────────────────────────────────── */}
+      {/* ── Desktop Sidebar ── */}
       <aside className="hidden md:flex fixed top-0 left-0 h-full w-72 bg-white dark:bg-[#050505] border-r border-gray-200 dark:border-neutral-800 flex-col z-30 shadow-[4px_0_24px_rgba(0,0,0,0.02)]">
         {sidebarContentUI}
       </aside>
 
-      {/* ── Main content ───────────────────────────────────── */}
-      <main className="flex-1 md:ml-72 pt-16 md:pt-0 min-h-screen relative z-0 pb-28 md:pb-0">
-        <div className="p-4 md:p-8 max-w-[1600px] mx-auto animate-in fade-in duration-500">
+      {/* ── Main Content Area ──
+          overflow-x-hidden here is the second defensive layer.
+          It ensures the content column itself never contributes
+          to horizontal scroll even if a grandchild misbehaves.
+      ── */}
+      <main className="flex-1 md:ml-72 pt-16 md:pt-0 min-h-screen relative z-0 pb-28 md:pb-0 overflow-x-hidden w-0 md:w-auto min-w-0">
+        <div className="p-4 md:p-8 max-w-[1600px] mx-auto">
           {children}
         </div>
       </main>
 
-      {/* ── HIGH-END MOBILE BOTTOM NAVBAR (Glassmorphic) ──────────────── */}
+      {/* ── Mobile Bottom Navbar ── */}
       <div className="md:hidden fixed bottom-4 left-4 right-4 z-50 animate-in slide-in-from-bottom-6 duration-500 pb-safe">
         <div className="bg-white/85 dark:bg-[#0a0a0a]/85 backdrop-blur-2xl border border-gray-200/60 dark:border-neutral-800/60 shadow-[0_8px_30px_rgb(0,0,0,0.12)] rounded-3xl p-2 flex items-center justify-between">
-          
           {mobileBottomNav.map((item) => {
             const active = isActive(item.path, item.exact);
             const Icon = item.icon;
             return (
-              <Link 
-                key={item.name} 
-                href={item.path} 
+              <Link
+                key={item.name}
+                href={item.path}
                 className="relative flex-1 flex flex-col items-center justify-center p-2 rounded-2xl group transition-all"
               >
                 {active && (
@@ -378,18 +352,13 @@ function AdminLayoutContent({ children }) {
               </Link>
             );
           })}
-
-          {/* Render "Menu" trigger */}
-          <button 
-            onClick={() => setMobileMenuOpen(true)} 
+          <button
+            onClick={() => setMobileMenuOpen(true)}
             className="relative flex-1 flex flex-col items-center justify-center p-2 rounded-2xl transition-all"
           >
             <Menu size={20} className="mb-1 text-gray-500 dark:text-neutral-400" strokeWidth={2} />
-            <span className="text-[9px] font-black tracking-wide text-gray-500 dark:text-neutral-500">
-              More
-            </span>
+            <span className="text-[9px] font-black tracking-wide text-gray-500 dark:text-neutral-500">More</span>
           </button>
-
         </div>
       </div>
 
@@ -400,7 +369,7 @@ function AdminLayoutContent({ children }) {
 export default function AdminLayoutWrapper({ children }) {
   return (
     <Suspense fallback={<div className="flex items-center justify-center h-screen bg-gray-50 dark:bg-black"><div className="animate-pulse font-bold text-gray-500">Loading Configuration...</div></div>}>
-       <AdminLayoutContent>{children}</AdminLayoutContent>
+      <AdminLayoutContent>{children}</AdminLayoutContent>
     </Suspense>
-  )
+  );
 }

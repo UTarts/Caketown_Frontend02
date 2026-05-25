@@ -85,6 +85,8 @@ export default function GlobalPayrollEnginePage() {
   const [session, setSession] = useState(null);
   const [branchId, setBranchId] = useState(urlBranchId);
   const [query, setQuery] = useState("");
+  // NEW: Tab switcher state
+  const [viewMode, setViewMode] = useState("active"); // "active" | "deactivated"
 
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -92,14 +94,19 @@ export default function GlobalPayrollEnginePage() {
   const [downloadingId, setDownloadingId] = useState(null);
 
   const [paymentTarget, setPaymentTarget] = useState(null);
-  const [paymentForm, setPaymentForm] = useState({ amount: "", remarks: "" });
+  const [paymentForm, setPaymentForm] = useState({ amount: "", remarks: "", payment_mode: "Cash" });
   const [paymentSubmitting, setPaymentSubmitting] = useState(false);
 
   const [inspectedUser, setInspectedUser] = useState(null);
   const [inspectorData, setInspectorData] = useState([]);
 
   const [breakdownModal, setBreakdownModal] = useState(null); 
-  const [historyModal, setHistoryModal] = useState(null); 
+  const [historyModal, setHistoryModal] = useState(null);
+
+  // NEW: Post-pay adjustment modal state
+  const [adjustModal, setAdjustModal] = useState(null);
+  const [adjustForm, setAdjustForm] = useState({ adjustment_type: "credit", amount: "", reason: "", payment_mode: "Cash" });
+  const [adjustSubmitting, setAdjustSubmitting] = useState(false);
 
   const daysInMonth = new Date(year, month, 0).getDate();
 
@@ -116,12 +123,18 @@ export default function GlobalPayrollEnginePage() {
     try { setSession(JSON.parse(raw)); } catch {}
   }, []);
 
+  // NEW: fetchAll now passes include_inactive based on active tab
   const fetchAll = useCallback(async () => {
     setLoading(true);
-    const payrollRes = await callApi("get_monthly_attendance", { month, year, branch_id: branchId === "all" ? "" : branchId });
+    const payrollRes = await callApi("get_monthly_attendance", {
+      month,
+      year,
+      branch_id: branchId === "all" ? "" : branchId,
+      include_inactive: viewMode === "deactivated" ? "1" : "0",
+    });
     if (payrollRes.status === "success") setRows(payrollRes.data || []);
     setLoading(false);
-  }, [month, year, branchId]);
+  }, [month, year, branchId, viewMode]);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
@@ -148,17 +161,18 @@ export default function GlobalPayrollEnginePage() {
     );
   }, [filteredRows, daysInMonth]);
 
-  // ─── CRITICAL FIX: USING mark_salary_paid ENGINE ───
+  // ─── UNCHANGED: PAYMENT HANDLER ───
   const handleProcessPayment = async (e) => {
     e.preventDefault();
     setPaymentSubmitting(true);
     const res = await callApi("mark_salary_paid", {
-      user_id: paymentTarget.user_id || paymentTarget.id,
-      branch_id: paymentTarget.branch_id,
+      userid: paymentTarget.user_id || paymentTarget.id,
+      branchid: paymentTarget.branch_id,
       month, year,
-      amount: parseFloat(paymentForm.amount),
+      amount: paymentForm.amount !== "" ? parseFloat(paymentForm.amount) : parseFloat(calcRow(paymentTarget, daysInMonth).salaryToPay),
       remarks: paymentForm.remarks,
-      admin_id: session?.id
+      payment_mode: paymentForm.payment_mode,
+      adminid: session?.id
     });
     setPaymentSubmitting(false);
 
@@ -201,6 +215,39 @@ export default function GlobalPayrollEnginePage() {
       });
     } else {
       setHistoryModal({ user, typesArray, label, data: [], loading: false });
+    }
+  };
+
+  // NEW: Post-pay adjustment handlers
+  const openAdjustModal = async (user) => {
+    setAdjustForm({ adjustment_type: "credit", amount: "", reason: "", payment_mode: "Cash" });
+    setAdjustModal({ user, adjustments: [], loading: true });
+    const res = await callApi("get_post_pay_adjustments", {
+      user_id: user.id || user.user_id, month, year,
+    });
+    setAdjustModal({ user, adjustments: res.status === "success" ? res.data : [], loading: false });
+  };
+
+  const handlePostPayAdjust = async (e) => {
+    e.preventDefault();
+    setAdjustSubmitting(true);
+    const res = await callApi("post_pay_adjustment", {
+      user_id: adjustModal.user.id || adjustModal.user.user_id,
+      branch_id: adjustModal.user.branch_id,
+      month, year,
+      adjustment_type: adjustForm.adjustment_type,
+      amount: parseFloat(adjustForm.amount),
+      reason: adjustForm.reason,
+      payment_mode: adjustForm.payment_mode,
+      admin_id: session?.id,
+    });
+    setAdjustSubmitting(false);
+    if (res.status === "success") {
+      await openAdjustModal(adjustModal.user);
+      setAdjustForm({ adjustment_type: "credit", amount: "", reason: "", payment_mode: "Cash" });
+      fetchAll();
+    } else {
+      alert(res.message || "Adjustment failed.");
     }
   };
 
@@ -257,11 +304,27 @@ export default function GlobalPayrollEnginePage() {
         ))}
       </div>
 
-      {/* ── SMART FILTERS (DROPDOWN REMOVED) ─────────────────────────────────── */}
+      {/* ── TAB SWITCHER (NEW) + SEARCH ──────────────────────────────────── */}
       <div className="flex flex-col sm:flex-row gap-3 shrink-0 w-full min-w-0">
+        {/* Tab switcher */}
+        <div className="flex gap-2 shrink-0">
+          <button
+            onClick={() => setViewMode("active")}
+            className={`px-4 py-2.5 rounded-2xl text-xs font-black transition-all whitespace-nowrap ${viewMode === "active" ? "bg-emerald-600 text-white shadow-md shadow-emerald-500/20" : "bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 text-gray-600 dark:text-neutral-400 hover:border-emerald-400"}`}
+          >
+            Active Staff
+          </button>
+          <button
+            onClick={() => setViewMode("deactivated")}
+            className={`px-4 py-2.5 rounded-2xl text-xs font-black transition-all whitespace-nowrap ${viewMode === "deactivated" ? "bg-red-600 text-white shadow-md shadow-red-500/20" : "bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 text-gray-600 dark:text-neutral-400 hover:border-red-400"}`}
+          >
+            Deactivated
+          </button>
+        </div>
+        {/* Search */}
         <div className="relative flex-1 min-w-0">
-            <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
-            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search employee, department, or role..." className="w-full bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-2xl py-3 pl-11 pr-4 text-sm font-bold text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500/50 transition-all shadow-sm" />
+          <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search employee, department, or role..." className="w-full bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-2xl py-3 pl-11 pr-4 text-sm font-bold text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500/50 transition-all shadow-sm" />
         </div>
       </div>
 
@@ -354,7 +417,7 @@ export default function GlobalPayrollEnginePage() {
 
                         <td className="p-4 md:p-5 text-right border border-gray-300 dark:border-neutral-700">
                           {c.deduction > 0 ? (
-                            <button onClick={() => openHistoryModal(row, ["fine", "other"], "Deductions")} className="font-mono text-sm font-black hover:underline text-red-700 dark:text-red-400 bg-red-100 dark:bg-red-500/20 px-2.5 py-1 rounded-lg transition-colors border border-red-200 dark:border-red-500/30">
+                            <button onClick={() => openHistoryModal(row, ["fine", "other"], "Deductions")} className="font-mono text-sm font-black hover:underline text-red-700 dark:text-red-400 bg-red-100 dark:bg-red-500/20 px-2.5 py-1 rounded-lg transition-colors border border-red-200 dark:border-red-900/50">
                               ₹{c.deduction.toLocaleString("en-IN")}
                             </button>
                           ) : <span className="font-mono text-sm text-gray-400 dark:text-neutral-600">—</span>}
@@ -372,11 +435,18 @@ export default function GlobalPayrollEnginePage() {
 
                         <td className="p-4 md:p-5 text-center border border-gray-300 dark:border-neutral-700">
                           {isPaid ? (
-                             <div className="flex flex-col items-center">
+                             <div className="flex flex-col items-center gap-1.5">
                                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-100 dark:bg-emerald-500/20 text-emerald-800 dark:text-emerald-400 text-[10px] font-black uppercase tracking-widest border border-emerald-300 dark:border-emerald-800/60 shadow-sm">
                                  <CheckCircle2 size={12} strokeWidth={3} /> Paid
                                </span>
-                               <span className="text-[8px] font-bold text-gray-500 mt-1">{new Date(row.processed_at).toLocaleDateString()}</span>
+                               <span className="text-[8px] font-bold text-gray-500">{new Date(row.processed_at).toLocaleDateString()}</span>
+                               {/* NEW: Adjust button for paid rows */}
+                               <button
+                                 onClick={() => openAdjustModal(row)}
+                                 className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[9px] font-black bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-500/20 transition-all border border-blue-200 dark:border-blue-500/20"
+                               >
+                                 <History size={10} /> Adjust
+                               </button>
                              </div>
                           ) : c.isNegative ? (
                              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-100 dark:bg-red-500/20 text-red-700 dark:text-red-400 text-[10px] font-black uppercase tracking-wider rounded-lg border border-red-200 dark:border-red-900/50">
@@ -386,7 +456,7 @@ export default function GlobalPayrollEnginePage() {
                             <button 
                               onClick={() => {
                                 setPaymentTarget({ ...row, c });
-                                setPaymentForm({ amount: c.salaryToPay, remarks: row.remarks || "" });
+                                setPaymentForm({ amount: c.salaryToPay, remarks: row.remarks || "", payment_mode: "Cash" });
                               }}
                               disabled={c.salaryToPay <= 0} 
                               className="inline-flex items-center justify-center gap-2 w-full px-3 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-black uppercase tracking-wider rounded-xl transition-all shadow-md shadow-blue-500/30 active:scale-95 disabled:opacity-50 disabled:active:scale-100 whitespace-nowrap"
@@ -473,7 +543,46 @@ export default function GlobalPayrollEnginePage() {
                 <div className="space-y-4">
                   <div className="space-y-1.5">
                     <label className="text-[10px] font-bold text-gray-600 dark:text-neutral-400 uppercase tracking-widest pl-1">Amount Being Paid</label>
-                    <input type="number" required value={paymentForm.amount} onChange={e => setPaymentForm({...paymentForm, amount: e.target.value})} className="w-full bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-300 dark:border-emerald-800/60 rounded-2xl px-4 py-3 text-lg font-black font-mono text-emerald-800 dark:text-emerald-400 outline-none focus:ring-2 focus:ring-emerald-500/50 transition-all" />
+                    {/* NEW: Carry-forward preview */}
+                    {(() => {
+                      const systemCalc = parseFloat(paymentTarget.c.salaryToPay);
+                      const adminEntered = parseFloat(paymentForm.amount || systemCalc);
+                      const diff = parseFloat((adminEntered - systemCalc).toFixed(2));
+                      return (
+                        <>
+                          <input
+                            type="number"
+                            required
+                            step="0.01"
+                            value={paymentForm.amount}
+                            onChange={e => setPaymentForm({...paymentForm, amount: e.target.value})}
+                            className="w-full bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-300 dark:border-emerald-800/60 rounded-2xl px-4 py-3 text-lg font-black font-mono text-emerald-800 dark:text-emerald-400 outline-none focus:ring-2 focus:ring-emerald-500/50 transition-all"
+                          />
+                          {Math.abs(diff) > 0.01 && (
+                            <div className={`text-xs font-bold px-3 py-2 rounded-xl mt-1.5 ${diff > 0 ? "bg-orange-50 dark:bg-orange-500/10 text-orange-700 dark:text-orange-400" : "bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400"}`}>
+                              {diff > 0
+                                ? `⚠ Overpayment of ₹${diff.toFixed(2)} — will be recorded as advance carry-forward to next month`
+                                : `ℹ Underpayment of ₹${Math.abs(diff).toFixed(2)} — surplus credit recorded for next month`
+                              }
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()}
+                  </div>
+                  {/* NEW: Payment mode selector */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-gray-600 dark:text-neutral-400 uppercase tracking-widest pl-1">Payment Mode</label>
+                    <select
+                      value={paymentForm.payment_mode}
+                      onChange={e => setPaymentForm({...paymentForm, payment_mode: e.target.value})}
+                      className="w-full bg-gray-50 dark:bg-[#111] border border-gray-300 dark:border-neutral-700 rounded-2xl px-4 py-3 text-sm font-bold text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500/50 transition-all"
+                    >
+                      <option value="Cash">Cash</option>
+                      <option value="UPI">UPI</option>
+                      <option value="Cheque">Cheque</option>
+                      <option value="Other">Other</option>
+                    </select>
                   </div>
                   <div className="space-y-1.5">
                     <label className="text-[10px] font-bold text-gray-600 dark:text-neutral-400 uppercase tracking-widest pl-1">Payment Reference (Optional)</label>
@@ -606,6 +715,104 @@ export default function GlobalPayrollEnginePage() {
       )}
 
       {/* ══════════════════════════════════════════════════════════════════
+          MODAL: POST-PAY ADJUSTMENT (NEW)
+      ══════════════════════════════════════════════════════════════════ */}
+      {adjustModal && (
+        <div className="fixed inset-0 bg-black/60 dark:bg-black/80 backdrop-blur-sm z-[100] flex items-end md:items-center justify-center sm:p-4">
+          <div className="bg-white dark:bg-[#0a0a0a] border border-gray-300 dark:border-neutral-700 w-full md:max-w-lg max-h-[90dvh] md:max-h-[85vh] flex flex-col rounded-t-3xl md:rounded-3xl shadow-2xl animate-in slide-in-from-bottom-full md:zoom-in-95 duration-200 overflow-hidden">
+            
+            <div className="p-4 md:p-5 border-b border-gray-200 dark:border-neutral-800 flex justify-between items-center bg-gray-50 dark:bg-neutral-900/40 shrink-0">
+              <div>
+                <h2 className="text-sm font-black flex items-center gap-2 text-gray-900 dark:text-white"><History size={16} className="text-blue-600" /> Post-Pay Adjustment</h2>
+                <p className="text-[10px] font-bold text-gray-500 mt-0.5">{adjustModal.user.name} • {["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][month-1]} {year}</p>
+              </div>
+              <button onClick={() => setAdjustModal(null)} className="p-2 bg-gray-200 dark:bg-neutral-800 rounded-full hover:bg-gray-300 transition-colors"><X size={16} /></button>
+            </div>
+
+            {/* Existing adjustments */}
+            <div className="p-5 border-b border-gray-100 dark:border-neutral-800 shrink-0">
+              <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-3">Previous Adjustments</p>
+              {adjustModal.loading ? (
+                <div className="text-xs text-gray-400 animate-pulse py-2">Loading...</div>
+              ) : adjustModal.adjustments.length === 0 ? (
+                <div className="text-xs text-gray-400 py-2">No adjustments recorded yet for this month.</div>
+              ) : (
+                <div className="space-y-2 max-h-32 overflow-y-auto custom-scrollbar">
+                  {adjustModal.adjustments.map((adj, i) => (
+                    <div key={i} className={`flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold ${adj.adjustment_type === 'credit' ? 'bg-emerald-50 dark:bg-emerald-500/10' : 'bg-red-50 dark:bg-red-500/10'}`}>
+                      <div className="min-w-0">
+                        <span className={adj.adjustment_type === 'credit' ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400'}>
+                          {adj.adjustment_type === 'credit' ? '+ Credit' : '− Debit'}
+                        </span>
+                        <span className="ml-2 text-gray-600 dark:text-neutral-400 truncate">{adj.reason || "—"}</span>
+                      </div>
+                      <div className="text-right shrink-0 ml-3">
+                        <div className={adj.adjustment_type === 'credit' ? 'text-emerald-700 dark:text-emerald-300' : 'text-red-700 dark:text-red-300'}>
+                          {adj.adjustment_type === 'credit' ? '+' : '-'}₹{parseFloat(adj.amount).toFixed(2)}
+                        </div>
+                        <div className="text-gray-400 font-normal text-[10px]">{adj.logged_by_name}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* New adjustment form */}
+            <form onSubmit={handlePostPayAdjust} className="flex-1 overflow-y-auto custom-scrollbar p-5 space-y-4 pb-safe">
+              <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest">New Adjustment</p>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setAdjustForm(f => ({ ...f, adjustment_type: "credit" }))}
+                  className={`py-2.5 rounded-xl text-sm font-black transition-all ${adjustForm.adjustment_type === "credit" ? "bg-emerald-600 text-white shadow-md" : "bg-gray-100 dark:bg-neutral-800 text-gray-600 dark:text-neutral-400"}`}
+                >
+                  + Credit
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAdjustForm(f => ({ ...f, adjustment_type: "debit" }))}
+                  className={`py-2.5 rounded-xl text-sm font-black transition-all ${adjustForm.adjustment_type === "debit" ? "bg-red-600 text-white shadow-md" : "bg-gray-100 dark:bg-neutral-800 text-gray-600 dark:text-neutral-400"}`}
+                >
+                  − Debit
+                </button>
+              </div>
+              <input
+                type="number" step="0.01" min="0.01" required
+                value={adjustForm.amount}
+                onChange={e => setAdjustForm(f => ({ ...f, amount: e.target.value }))}
+                placeholder="Amount (₹)"
+                className="w-full px-4 py-3 rounded-2xl border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-[#111] text-sm font-black outline-none focus:ring-2 focus:ring-emerald-500 text-gray-900 dark:text-white"
+              />
+              <input
+                type="text" required
+                value={adjustForm.reason}
+                onChange={e => setAdjustForm(f => ({ ...f, reason: e.target.value }))}
+                placeholder="Reason for adjustment (required)"
+                className="w-full px-4 py-3 rounded-2xl border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-[#111] text-sm outline-none focus:ring-2 focus:ring-emerald-500 text-gray-900 dark:text-white"
+              />
+              <select
+                value={adjustForm.payment_mode}
+                onChange={e => setAdjustForm(f => ({ ...f, payment_mode: e.target.value }))}
+                className="w-full px-4 py-3 rounded-2xl border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-[#111] text-sm outline-none focus:ring-2 focus:ring-emerald-500 text-gray-900 dark:text-white"
+              >
+                <option value="Cash">Cash</option>
+                <option value="UPI">UPI</option>
+                <option value="Cheque">Cheque</option>
+                <option value="Other">Other</option>
+              </select>
+              <button
+                type="submit" disabled={adjustSubmitting}
+                className="w-full py-3.5 bg-gray-900 dark:bg-white text-white dark:text-gray-900 rounded-2xl font-black text-sm disabled:opacity-50 active:scale-[0.98] transition-all"
+              >
+                {adjustSubmitting ? "Saving..." : "Record Adjustment"}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════════
           SLIDE-OUT MINI-LEDGER VERIFICATION
       ══════════════════════════════════════════════════════════════════ */}
       {inspectedUser && (
@@ -658,7 +865,6 @@ export default function GlobalPayrollEnginePage() {
                            {day.status === 'L' && <span className="text-blue-600 font-bold text-[10px] uppercase">Leave</span>}
                            {day.status === 'PH' && <span className="text-purple-600 font-bold text-[10px] uppercase">Paid Holiday</span>}
                            {(day.status === 'A' || day.status === 'M') && <span className="text-red-600 font-bold text-[10px] uppercase">Absent</span>}
-                           
                            {day.override && <span className="bg-gray-200 dark:bg-neutral-800 text-gray-500 text-[8px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded shadow-sm">Override</span>}
                         </div>
                       </div>
