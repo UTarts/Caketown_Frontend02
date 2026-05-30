@@ -13,10 +13,10 @@ import {
 export default function ManagerDashboardPage() {
   const router = useRouter();
   const [session, setSession] = useState(null);
-  
+
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
-  
+
   const [masterData, setMasterData] = useState(null);
   const [liveData, setLiveData] = useState(null);
   const [systemLogs, setSystemLogs] = useState([]);
@@ -25,7 +25,7 @@ export default function ManagerDashboardPage() {
   useEffect(() => {
     const raw = localStorage.getItem("caketown_session");
     if (!raw) { router.push("/"); return; }
-    
+
     try {
       const parsed = JSON.parse(raw);
       if (parsed.role !== "manager") {
@@ -48,13 +48,13 @@ export default function ManagerDashboardPage() {
       const [masterRes, liveRes, logsRes] = await Promise.all([
         callApi("get_branch_master", { branch_id: session.branch_id }),
         callApi("get_live_attendance", { branch_id: session.branch_id, date: today }),
-        callApi("get_system_logs", { branch_id: session.branch_id, per_page: 50 }) 
+        callApi("get_system_logs", { branch_id: session.branch_id, per_page: 50 })
       ]);
 
       if (masterRes.status === "success") setMasterData(masterRes.data);
       if (liveRes.status === "success") setLiveData(liveRes.data);
       if (logsRes.status === "success") setSystemLogs(logsRes.data || []);
-      
+
     } catch (error) {
       console.error("Dashboard Sync Error:", error);
     } finally {
@@ -66,7 +66,7 @@ export default function ManagerDashboardPage() {
   useEffect(() => {
     if (session) {
       fetchDashboardData();
-      const interval = setInterval(() => fetchDashboardData(true), 45000); 
+      const interval = setInterval(() => fetchDashboardData(true), 45000);
       return () => clearInterval(interval);
     }
   }, [session, fetchDashboardData]);
@@ -81,34 +81,39 @@ export default function ManagerDashboardPage() {
   }
 
   // ─── DATA PROCESSING ───
-  const permissions = session.feature_permissions || {};
+  const permissions =
+    session.feature_permissions ||
+    session.featurepermissions ||
+    session.permissions ||
+    {};
+
   const totalStaff = masterData?.staff?.length || 0;
   const allPeople = liveData?.all_people || [];
-  
+
   const onFloorCount = allPeople.filter(p => p.status === 'working').length;
   const onBreakCount = allPeople.filter(p => p.status === 'on_break').length;
   const absentCount = totalStaff - onFloorCount - onBreakCount;
 
   // Filter logs to ONLY show financial actions
-  const financialLogs = systemLogs.filter(log => 
-    log.action_type.includes("ADVANCE") || 
-    log.action_type.includes("SALARY") || 
-    log.action_type.includes("BILL") || 
-    log.action_type.includes("FINE") || 
+  const financialLogs = systemLogs.filter(log =>
+    log.action_type.includes("ADVANCE") ||
+    log.action_type.includes("SALARY") ||
+    log.action_type.includes("BILL") ||
+    log.action_type.includes("FINE") ||
     log.action_type.includes("DEDUCTION")
   ).slice(0, 15);
 
   const QUICK_LINKS = [
-    { title: "Live Floor Monitoring", path: "/manager/live-floor", icon: Activity, color: "text-emerald-500", bg: "bg-emerald-50 dark:bg-emerald-500/10", border: "border-emerald-200 dark:border-emerald-900/50", perm: "view_live_attendance" },
-    { title: "Biometric Terminal Ops", path: "/manager/terminal", icon: MonitorPlay, color: "text-blue-500", bg: "bg-blue-50 dark:bg-blue-500/10", border: "border-blue-200 dark:border-blue-900/50", perm: "manage_terminal" },
-    { title: "Staff Roster & Faces", path: "/manager/staff", icon: Users, color: "text-purple-500", bg: "bg-purple-50 dark:bg-purple-500/10", border: "border-purple-200 dark:border-purple-900/50", perm: "view_staff_list" },
-    { title: "Finance Ledger", path: "/manager/finance", icon: Wallet, color: "text-orange-500", bg: "bg-orange-50 dark:bg-orange-500/10", border: "border-orange-200 dark:border-orange-900/50", perm: "view_finance_ledger" },
-    { title: "Process Payroll", path: "/manager/payroll", icon: Banknote, color: "text-rose-500", bg: "bg-rose-50 dark:bg-rose-500/10", border: "border-rose-200 dark:border-rose-900/50", perm: "view_payroll" },
+    { title: "Live Floor Monitoring",  path: "/manager/live-floor", icon: Activity,    color: "text-emerald-500", bg: "bg-emerald-50 dark:bg-emerald-500/10", border: "border-emerald-200 dark:border-emerald-900/50", perm: "view_live_attendance" },
+    { title: "Biometric Terminal Ops", path: "/manager/terminal",   icon: MonitorPlay, color: "text-blue-500",    bg: "bg-blue-50 dark:bg-blue-500/10",       border: "border-blue-200 dark:border-blue-900/50",    perm: "manage_terminal" },
+    { title: "Staff Roster & Faces",   path: "/manager/staff",      icon: Users,       color: "text-purple-500",  bg: "bg-purple-50 dark:bg-purple-500/10",   border: "border-purple-200 dark:border-purple-900/50",perm: "view_staff_list" },
+    { title: "Finance Ledger",         path: "/manager/finance",    icon: Wallet,      color: "text-orange-500",  bg: "bg-orange-50 dark:bg-orange-500/10",   border: "border-orange-200 dark:border-orange-900/50",perm: "view_finance_ledger" },
+    { title: "Process Payroll",        path: "/manager/payroll",    icon: Banknote,    color: "text-rose-500",    bg: "bg-rose-50 dark:bg-rose-500/10",       border: "border-rose-200 dark:border-rose-900/50",    perm: "view_payroll" },
   ];
 
   return (
     <div className="space-y-6 md:space-y-8 animate-in fade-in duration-500 pb-24 w-full overflow-x-hidden">
-      
+
       {/* ── COMMAND CENTER HEADER ── */}
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 bg-white/60 dark:bg-neutral-900/40 p-5 md:p-6 rounded-3xl backdrop-blur-xl border border-gray-200/60 dark:border-neutral-800/60 shadow-sm mx-3 md:mx-0 mt-3 md:mt-0 relative overflow-hidden">
         <div className="absolute top-0 right-0 w-64 h-64 bg-blue-500/5 rounded-full blur-3xl pointer-events-none -mr-20 -mt-20"></div>
@@ -130,7 +135,7 @@ export default function ManagerDashboardPage() {
           <button onClick={() => fetchDashboardData(false)} className="p-3 bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 hover:border-blue-500/50 rounded-xl text-gray-600 dark:text-neutral-400 hover:text-blue-500 transition-all shadow-sm group">
             <RefreshCw size={18} className={`${syncing ? "animate-spin text-blue-500" : ""} group-hover:rotate-180 transition-transform duration-500`} />
           </button>
-          
+
           {canWrite(permissions, "manage_terminal") && (
             <button
               onClick={() => router.push("/manager/terminal")}
@@ -145,10 +150,10 @@ export default function ManagerDashboardPage() {
       {/* ── LIVE BRANCH METRICS ── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-5 px-3 md:px-0">
         {[
-          { label: "Total Branch Staff", value: totalStaff, icon: Users, color: "text-blue-600 dark:text-blue-400", bg: "bg-blue-50 dark:bg-blue-500/10", border: "border-blue-100 dark:border-blue-900/30" },
-          { label: "On Floor Now", value: onFloorCount, icon: CheckCircle2, color: "text-emerald-600 dark:text-emerald-400", bg: "bg-emerald-50 dark:bg-emerald-500/10", border: "border-emerald-100 dark:border-emerald-900/30" },
-          { label: "On Break", value: onBreakCount, icon: Coffee, color: "text-yellow-600 dark:text-yellow-400", bg: "bg-yellow-50 dark:bg-yellow-500/10", border: "border-yellow-100 dark:border-yellow-900/30" },
-          { label: "Off Duty / Absent", value: absentCount, icon: Clock3, color: "text-red-600 dark:text-red-400", bg: "bg-red-50 dark:bg-red-500/10", border: "border-red-100 dark:border-red-900/30" },
+          { label: "Total Branch Staff", value: totalStaff,    icon: Users,         color: "text-blue-600 dark:text-blue-400",    bg: "bg-blue-50 dark:bg-blue-500/10",    border: "border-blue-100 dark:border-blue-900/30"    },
+          { label: "On Floor Now",       value: onFloorCount,  icon: CheckCircle2,  color: "text-emerald-600 dark:text-emerald-400", bg: "bg-emerald-50 dark:bg-emerald-500/10", border: "border-emerald-100 dark:border-emerald-900/30" },
+          { label: "On Break",           value: onBreakCount,  icon: Coffee,        color: "text-yellow-600 dark:text-yellow-400", bg: "bg-yellow-50 dark:bg-yellow-500/10",border: "border-yellow-100 dark:border-yellow-900/30" },
+          { label: "Off Duty / Absent",  value: absentCount,   icon: Clock3,        color: "text-red-600 dark:text-red-400",      bg: "bg-red-50 dark:bg-red-500/10",      border: "border-red-100 dark:border-red-900/30"      },
         ].map((card) => (
           <div key={card.label} className={`rounded-3xl p-5 md:p-6 shadow-sm border ${card.border} ${card.bg}`}>
             <div className="flex items-center justify-between mb-3">
@@ -161,19 +166,19 @@ export default function ManagerDashboardPage() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 md:gap-8 px-3 md:px-0">
-        
+
         {/* ── QUICK COMMAND HUB ── */}
         <div className={`space-y-4 ${canRead(permissions, "view_system_logs") ? 'lg:col-span-1' : 'lg:col-span-3'}`}>
           <h3 className="text-sm font-black text-gray-900 dark:text-white uppercase tracking-widest flex items-center gap-2 px-1">
             <Activity size={16} className="text-blue-500" /> Authorized Modules
           </h3>
-          
+
           <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-3xl p-4 shadow-sm flex flex-col gap-3">
             {QUICK_LINKS.map((link) => {
               if (!canRead(permissions, link.perm)) return null;
-              
+
               return (
-                <button 
+                <button
                   key={link.title}
                   onClick={() => router.push(link.path)}
                   className={`w-full flex items-center justify-between p-4 rounded-2xl border transition-all duration-200 hover:shadow-md group ${link.bg} ${link.border}`}
@@ -203,7 +208,7 @@ export default function ManagerDashboardPage() {
             <h3 className="text-sm font-black text-gray-900 dark:text-white uppercase tracking-widest flex items-center gap-2 px-1">
               <History size={16} className="text-orange-500" /> Recent Financial Activity
             </h3>
-            
+
             <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-3xl p-5 md:p-6 shadow-sm relative overflow-hidden h-[500px]">
               <div className="h-full overflow-y-auto custom-scrollbar pr-2">
                 {financialLogs.length === 0 ? (

@@ -4,8 +4,8 @@ import { useEffect, useState, useRef } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import {
-  LayoutDashboard, Users, LogOut, Banknote, Sun, Moon, 
-  Activity, CalendarDays, History, Menu, X, UserCircle2, Shield, ScanFace, MonitorPlay, MapPin
+  LayoutDashboard, Users, LogOut, Banknote, Sun, Moon,
+  Activity, CalendarDays, History, Menu, X, UserCircle2, Shield, ScanFace, MonitorPlay, MapPin, Wallet
 } from "lucide-react";
 import { logout } from "@/lib/apiClient";
 import { canRead } from "@/lib/permissions";
@@ -13,7 +13,7 @@ import { canRead } from "@/lib/permissions";
 export default function ManagerLayout({ children }) {
   const router = useRouter();
   const pathname = usePathname();
-  
+
   const [user, setUser] = useState(null);
   const [dark, setDark] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -40,7 +40,7 @@ export default function ManagerLayout({ children }) {
   useEffect(() => {
     const session = localStorage.getItem("caketown_session");
     if (!session) { router.push("/"); return; }
-    
+
     try {
       const parsed = JSON.parse(session);
       if (parsed.role !== "manager") { router.push("/"); return; }
@@ -49,6 +49,18 @@ export default function ManagerLayout({ children }) {
       router.push("/");
     }
   }, [router]);
+
+  // ─── Close mobile menu & profile menu on route change ───
+  useEffect(() => {
+    setMobileMenuOpen(false);
+    setProfileMenuOpen(false);
+  }, [pathname]);
+
+  // ─── Lock body scroll when mobile drawer is open ───
+  useEffect(() => {
+    document.body.style.overflow = mobileMenuOpen ? "hidden" : "";
+    return () => { document.body.style.overflow = ""; };
+  }, [mobileMenuOpen]);
 
   const toggleTheme = () => {
     const next = !dark;
@@ -63,20 +75,27 @@ export default function ManagerLayout({ children }) {
 
   const initials = user.name.split(" ").map(n => n[0]).join("").substring(0, 2).toUpperCase();
 
+  // ─── NORMALIZE PERMISSIONS (handles any key the session stores them under) ───
+  const featurePermissions =
+    user.feature_permissions ||
+    user.featurepermissions ||
+    user.permissions ||
+    {};
+
   // ─── RBAC MANAGER NAVIGATION ───
   const ALL_NAV_ITEMS = [
-    { name: "Dashboard", path: "/manager/dashboard", icon: LayoutDashboard, perm: null, exact: true },
-    { name: "Live Floor", path: "/manager/live-floor", icon: Activity, perm: "view_live_attendance" },
-    { name: "Terminal Ops", path: "/manager/terminal", icon: MonitorPlay, perm: "manage_terminal" },
-    { name: "Staff Roster", path: "/manager/staff", icon: Users, perm: "view_staff_list" },
-    { name: "Attendance", path: "/manager/attendance", icon: CalendarDays, perm: "view_attendance_history" },
-    { name: "Payroll", path: "/manager/payroll", icon: Banknote, perm: "view_payroll" },
-    { name: "Finance Ledger", path: "/manager/finance", icon: History, perm: "view_finance_ledger" },
-    { name: "System Logs", path: "/manager/system", icon: History, perm: "view_system_logs" },
+    { name: "Dashboard",      path: "/manager/dashboard",  icon: LayoutDashboard, perm: null,                      exact: true },
+    { name: "Live Floor",     path: "/manager/live-floor", icon: Activity,        perm: "view_live_attendance" },
+    { name: "Terminal Ops",   path: "/manager/terminal",   icon: MonitorPlay,     perm: "manage_terminal" },
+    { name: "Staff Roster",   path: "/manager/staff",      icon: Users,           perm: "view_staff_list" },
+    { name: "Attendance",     path: "/manager/attendance", icon: CalendarDays,    perm: "view_attendance_history" },
+    { name: "Payroll",        path: "/manager/payroll",    icon: Banknote,        perm: "view_payroll" },
+    { name: "Finance Ledger", path: "/manager/finance",    icon: Wallet,          perm: "view_finance_ledger" },
+    { name: "System Logs",    path: "/manager/system",     icon: History,         perm: "view_system_logs" },
   ];
 
-  const authorizedNavItems = ALL_NAV_ITEMS.filter(item => 
-    item.perm === null || canRead(user.feature_permissions, item.perm)
+  const authorizedNavItems = ALL_NAV_ITEMS.filter(item =>
+    item.perm === null || canRead(featurePermissions, item.perm)
   );
 
   const isActive = (path, exact = false) => {
@@ -89,7 +108,7 @@ export default function ManagerLayout({ children }) {
     <>
       {/* Premium Diagonal Logo Container */}
       <div className="h-24 w-full bg-white shadow-[0_2px_15px_rgba(0,0,0,0.03)] shrink-0 flex flex-col justify-center px-6 relative z-10" style={{ clipPath: 'polygon(0 0, 100% 0, 100% 85%, 0 100%)' }}>
-         <img src="/logo.png" alt="Caketown" className="h-10 w-auto object-contain object-center" onError={(e) => { e.target.style.display='none'; }}/>
+        <img src="/logo.png" alt="Caketown" className="h-10 w-auto object-contain object-center" onError={(e) => { e.target.style.display='none'; }}/>
       </div>
 
       <nav className="flex-1 overflow-y-auto custom-scrollbar px-4 py-5 space-y-6">
@@ -148,7 +167,7 @@ export default function ManagerLayout({ children }) {
   );
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-[#050505] selection:bg-blue-500 selection:text-white flex">
+    <div className="min-h-screen bg-gray-50 dark:bg-[#050505] selection:bg-blue-500 selection:text-white flex overflow-x-hidden">
 
       {/* ── Mobile Top Header ──────────────── */}
       <div className="md:hidden fixed top-0 left-0 right-0 z-40 bg-white/80 dark:bg-black/80 backdrop-blur-xl border-b border-gray-200 dark:border-neutral-800 h-16 flex items-center justify-between shadow-sm px-4">
@@ -156,15 +175,14 @@ export default function ManagerLayout({ children }) {
           <img src="/logo.png" alt="Caketown" className="h-6 w-auto object-contain object-left" onError={(e) => { e.target.style.display='none'; }} />
           <span className="text-[8px] text-blue-600 font-black uppercase tracking-widest mt-0.5">Manager</span>
         </div>
-        
-        {/* Quick Profile Access on Mobile Header */}
+
         <div className="flex-1"></div>
         <Link href="/manager/profile" className="z-20 w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400 flex items-center justify-center font-black text-xs border border-blue-200 dark:border-blue-800 shadow-sm">
           {initials}
         </Link>
       </div>
 
-      {/* ── Mobile Slide-out Drawer (For 'More' items) ──────────────── */}
+      {/* ── Mobile Slide-out Drawer ──────────────── */}
       {mobileMenuOpen && (
         <div className="md:hidden fixed inset-0 z-[100] flex">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setMobileMenuOpen(false)}></div>
@@ -181,8 +199,8 @@ export default function ManagerLayout({ children }) {
       </aside>
 
       {/* ── Main content ───────────────────────────────────── */}
-      <main className="flex-1 md:ml-72 pt-16 md:pt-0 min-h-screen relative z-0 pb-28 md:pb-0">
-        <div className="p-4 md:p-8 max-w-[1600px] mx-auto animate-in fade-in duration-500">
+      <main className="flex-1 md:ml-72 pt-16 md:pt-0 min-h-screen relative z-0 pb-28 md:pb-0 min-w-0 overflow-x-hidden w-full">
+        <div className="p-3 sm:p-4 md:p-8 w-full min-w-0 overflow-x-hidden animate-in fade-in duration-500">
           {children}
         </div>
       </main>
@@ -190,15 +208,15 @@ export default function ManagerLayout({ children }) {
       {/* ── HIGH-END MOBILE BOTTOM NAVBAR (Glassmorphic) ──────────────── */}
       <div className="md:hidden fixed bottom-4 left-4 right-4 z-50 animate-in slide-in-from-bottom-6 duration-500 pb-safe">
         <div className="bg-white/85 dark:bg-[#0a0a0a]/85 backdrop-blur-2xl border border-gray-200/60 dark:border-neutral-800/60 shadow-[0_8px_30px_rgb(0,0,0,0.12)] rounded-3xl p-2 flex items-center justify-between">
-          
+
           {/* Render top 4 authorized items */}
           {authorizedNavItems.slice(0, 4).map((item) => {
             const active = isActive(item.path, item.exact);
             const Icon = item.icon;
             return (
-              <Link 
-                key={item.name} 
-                href={item.path} 
+              <Link
+                key={item.name}
+                href={item.path}
                 className="relative flex-1 flex flex-col items-center justify-center p-2 rounded-2xl group transition-all"
               >
                 {active && (
@@ -206,16 +224,16 @@ export default function ManagerLayout({ children }) {
                 )}
                 <Icon size={20} className={`mb-1 transition-colors ${active ? 'text-blue-600 dark:text-blue-400' : 'text-gray-500 dark:text-neutral-400'}`} strokeWidth={active ? 2.5 : 2} />
                 <span className={`text-[9px] font-black tracking-wide ${active ? 'text-blue-700 dark:text-blue-300' : 'text-gray-500 dark:text-neutral-500'}`}>
-                  {item.name.split(" ")[0]} {/* Keep name short for mobile */}
+                  {item.name.split(" ")[0]}
                 </span>
               </Link>
             );
           })}
 
-          {/* Render "Menu" trigger if there are more than 4 items */}
+          {/* "More" trigger if more than 4 items */}
           {authorizedNavItems.length > 4 && (
-            <button 
-              onClick={() => setMobileMenuOpen(true)} 
+            <button
+              onClick={() => setMobileMenuOpen(true)}
               className="relative flex-1 flex flex-col items-center justify-center p-2 rounded-2xl transition-all"
             >
               <Menu size={20} className="mb-1 text-gray-500 dark:text-neutral-400" strokeWidth={2} />

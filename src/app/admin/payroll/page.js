@@ -63,7 +63,11 @@ function calcRow(row, daysInMonth) {
   return {
     salary, totalDuty, leaveCap, paidLeaves, paidDuty, perDay,
     preAdvance, finalAdvance, shopAdvance, shopBill, totalAdvance,
-    fine, other, deduction, salaryToPay, paid, gross, isNegative, theoreticalNet
+    fine, other, deduction, salaryToPay, paid, gross, isNegative, theoreticalNet,
+    // NEW FIELDS:
+    paidAmount: parseFloat(row.paid_amount || row.paid || 0),
+    carryForwardType: row.carry_forward_type || 'none',
+    carryForwardAmount: parseFloat(row.carry_forward_amount || 0)
   };
 }
 
@@ -161,18 +165,18 @@ export default function GlobalPayrollEnginePage() {
     );
   }, [filteredRows, daysInMonth]);
 
-  // ─── UNCHANGED: PAYMENT HANDLER ───
+  // ─── UPDATED: PAYMENT HANDLER ───
   const handleProcessPayment = async (e) => {
     e.preventDefault();
     setPaymentSubmitting(true);
     const res = await callApi("mark_salary_paid", {
-      userid: paymentTarget.user_id || paymentTarget.id,
-      branchid: paymentTarget.branch_id,
+      user_id: paymentTarget.user_id || paymentTarget.id,
+      branch_id: paymentTarget.branch_id,
       month, year,
       amount: paymentForm.amount !== "" ? parseFloat(paymentForm.amount) : parseFloat(calcRow(paymentTarget, daysInMonth).salaryToPay),
       remarks: paymentForm.remarks,
       payment_mode: paymentForm.payment_mode,
-      adminid: session?.id
+      admin_id: session?.id
     });
     setPaymentSubmitting(false);
 
@@ -180,6 +184,7 @@ export default function GlobalPayrollEnginePage() {
       setPaymentTarget(null);
       fetchAll();
     } else {
+      // Now displays the exact server error message instead of a generic failure
       alert(res.message || "Failed to process payment.");
     }
   };
@@ -428,9 +433,25 @@ export default function GlobalPayrollEnginePage() {
                         </td>
 
                         <td className="p-4 md:p-5 text-right bg-emerald-50/50 dark:bg-emerald-900/10 border border-emerald-200 dark:border-emerald-900/40">
-                          <span className={`font-mono font-black text-lg ${c.isNegative ? 'text-red-600 dark:text-red-400' : 'text-emerald-700 dark:text-emerald-400'}`}>
-                            {c.isNegative ? `-₹${Math.abs(c.theoreticalNet).toLocaleString("en-IN")}` : `₹${c.salaryToPay.toLocaleString("en-IN")}`}
-                          </span>
+                          {isPaid ? (
+                             <div className="flex flex-col items-end">
+                                <span className="font-mono font-black text-lg text-emerald-700 dark:text-emerald-400">
+                                  ₹{c.paidAmount.toLocaleString("en-IN")}
+                                </span>
+                                {/* Carry Forward / Adjustment Indicator */}
+                                {c.paidAmount !== c.salaryToPay && (
+                                   <span className={`text-[9px] font-bold mt-1 px-1.5 py-0.5 rounded ${c.paidAmount > c.salaryToPay ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400' : 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'}`}>
+                                     {c.carryForwardAmount > 0 
+                                        ? `${c.carryForwardType === 'overpayment' ? 'Overpaid' : 'Underpaid'} (CF)` 
+                                        : 'Adjusted'}
+                                   </span>
+                                )}
+                             </div>
+                          ) : (
+                             <span className={`font-mono font-black text-lg ${c.isNegative ? 'text-red-600 dark:text-red-400' : 'text-emerald-700 dark:text-emerald-400'}`}>
+                               {c.isNegative ? `-₹${Math.abs(c.theoreticalNet).toLocaleString("en-IN")}` : `₹${c.salaryToPay.toLocaleString("en-IN")}`}
+                             </span>
+                          )}
                         </td>
 
                         <td className="p-4 md:p-5 text-center border border-gray-300 dark:border-neutral-700">

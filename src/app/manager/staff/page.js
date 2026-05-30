@@ -1,320 +1,635 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import * as faceapi from "face-api.js";
 import { callApi } from "@/lib/apiClient";
 import { canRead, canWrite } from "@/lib/permissions";
-import * as faceapi from "face-api.js";
-import { 
-  Users, Camera, CheckCircle2, AlertCircle, X, 
-  Loader2, ScanFace, RefreshCcw, Shield, ShieldAlert 
+import {
+  Users,
+  X,
+  Loader2,
+  ScanFace,
+  RefreshCcw,
+  CheckCircle2,
+  AlertCircle,
 } from "lucide-react";
+
+const DETECTION_INTERVAL_MS = 450;
+const DETECTION_INPUT_SIZE = 160;
+const CAMERA_WIDTH = 480;
+const CAMERA_HEIGHT = 640;
+
+function hasRegisteredFace(user) {
+  return Boolean(
+    user?.face_descriptor ||
+      user?.descriptor ||
+      user?.has_face ||
+      user?.face_registered ||
+      user?.biometric_registered ||
+      user?.is_face_registered ||
+      user?.face_registered_at
+  );
+}
+
+function getDepartmentLabel(user) {
+  return user?.department || user?.role || "Standard Staff";
+}
 
 export default function BranchStaffPage() {
   const router = useRouter();
+
   const [staff, setStaff] = useState([]);
   const [loading, setLoading] = useState(true);
   const [session, setSession] = useState(null);
-  
-  // Biometric Modal States
+
   const [registeringUser, setRegisteringUser] = useState(null);
   const [modelsLoaded, setModelsLoaded] = useState(false);
-  const [scanStatus, setScanStatus] = useState("Initializing Secure Camera...");
+  const [cameraReady, setCameraReady] = useState(false);
+  const [scanStatus, setScanStatus] = useState("Starting...");
   const [isSaving, setIsSaving] = useState(false);
-  const [showSuccess, setShowSuccess] = useState(false); // New Success State
-  const [capturedDescriptor, setCapturedDescriptor] = useState(null); 
-  
+  const [showSuccess, setShowSuccess] = useState(false);
+  const [capturedDescriptor, setCapturedDescriptor] = useState(null);
+
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
+  const detectionIntervalRef = useRef(null);
+  const mountedRef = useRef(true);
+  const latestDescriptorRef = useRef(null);
+  const isSavingRef = useRef(false);
+  const showSuccessRef = useRef(false);
 
   useEffect(() => {
-    const rawSession = localStorage.getItem("caketown_session");
-    if (!rawSession) { router.push("/"); return; }
-    
-    const parsed = JSON.parse(rawSession);
-    
-    // ─── GATEKEEPER: READ ACCESS ───
-    if (!canRead(parsed.feature_permissions, 'view_staff_list')) {
-      router.push("/manager/dashboard");
-      return;
+    isSavingRef.current = isSaving;
+  }, [isSaving]);
+
+  useEffect(() => {
+    showSuccessRef.current = showSuccess;
+  }, [showSuccess]);
+
+  const stopDetectionLoop = () => {
+    if (detectionIntervalRef.current) {
+      clearInterval(detectionIntervalRef.current);
+      detectionIntervalRef.current = null;
     }
-    
-    setSession(parsed);
-    if (parsed?.branch_id) fetchStaff(parsed.branch_id);
-  }, [router]);
+  };
+
+  const releaseMedia = () => {
+    stopDetectionLoop();
+
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
+
+    if (videoRef.current) {
+      try {
+        videoRef.current.pause();
+      } catch {}
+      videoRef.current.srcObject = null;
+    }
+
+    if (canvasRef.current) {
+      const ctx = canvasRef.current.getContext("2d");
+      if (ctx) {
+        ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+      }
+    }
+
+    latestDescriptorRef.current = null;
+  };
+
+  const closeRegistrationModal = () => {
+    releaseMedia();
+    setRegisteringUser(null);
+    setModelsLoaded(false);
+    setCameraReady(false);
+    setCapturedDescriptor(null);
+    setIsSaving(false);
+    setShowSuccess(false);
+    setScanStatus("Starting...");
+  };
 
   const fetchStaff = async (branchId) => {
+    if (!branchId) return;
+
     setLoading(true);
-    const res = await callApi("get_branch_staff", { branch_id: branchId });
-    if (res.status === "success") setStaff(res.data);
-    setLoading(false);
+    try {
+      const res = await callApi("get_branch_staff", { branch_id: branchId });
+      if (res?.status === "success") {
+        setStaff(Array.isArray(res.data) ? res.data : []);
+      } else {
+        setStaff([]);
+      }
+    } catch (error) {
+      console.error("Staff fetch error:", error);
+      setStaff([]);
+    } finally {
+      if (mountedRef.current) setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    mountedRef.current = true;
+
+    const rawSession = localStorage.getItem("caketown_session");
+    if (!rawSession) {
+      router.push("/");
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(rawSession);
+
+      if (!canRead(parsed.feature_permissions, "view_staff_list")) {
+        router.push("/manager/dashboard");
+        return;
+      }
+
+      setSession(parsed);
+
+      if (parsed?.branch_id) {
+        fetchStaff(parsed.branch_id);
+      }
+    } catch (error) {
+      console.error("Session parse error:", error);
+      router.push("/");
+    }
+
+    return () => {
+      mountedRef.current = false;
+      releaseMedia();
+    };
+  }, [router]);
+
+  const drawFaceGuide = (ctx, box) => {
+    const { x, y, width, height } = box;
+    const radius = 16;
+
+    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    ctx.strokeStyle = "#10b981";
+    ctx.lineWidth = 3;
+    ctx.lineJoin = "round";
+    ctx.shadowColor = "#10b981";
+    ctx.shadowBlur = 12;
+
+    ctx.beginPath();
+    ctx.moveTo(x + radius, y);
+    ctx.lineTo(x + width - radius, y);
+    ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+    ctx.lineTo(x + width, y + height - radius);
+    ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+    ctx.lineTo(x + radius, y + height);
+    ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+    ctx.lineTo(x, y + radius);
+    ctx.quadraticCurveTo(x, y, x + radius, y);
+    ctx.stroke();
+
+    ctx.shadowBlur = 0;
+  };
+
+  const startDetectionLoop = () => {
+    stopDetectionLoop();
+
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas) return;
+
+    const displaySize = {
+      width: video.videoWidth || CAMERA_WIDTH,
+      height: video.videoHeight || CAMERA_HEIGHT,
+    };
+
+    canvas.width = displaySize.width;
+    canvas.height = displaySize.height;
+    faceapi.matchDimensions(canvas, displaySize);
+
+    detectionIntervalRef.current = setInterval(async () => {
+      if (!videoRef.current || video.readyState < 2 || isSavingRef.current || showSuccessRef.current) {
+        return;
+      }
+
+      try {
+        const detection = await faceapi
+          .detectSingleFace(
+            video,
+            new faceapi.TinyFaceDetectorOptions({
+              inputSize: DETECTION_INPUT_SIZE,
+              scoreThreshold: 0.5,
+            })
+          )
+          .withFaceLandmarks()
+          .withFaceDescriptor();
+
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return;
+
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        if (!detection) {
+          latestDescriptorRef.current = null;
+          setCapturedDescriptor(null);
+          setScanStatus("No face detected");
+          return;
+        }
+
+        const resized = faceapi.resizeResults(detection, displaySize);
+        drawFaceGuide(ctx, resized.detection.box);
+
+        latestDescriptorRef.current = detection.descriptor;
+        setCapturedDescriptor(detection.descriptor);
+        setScanStatus("Face detected");
+      } catch (error) {
+        console.error("Detection error:", error);
+        latestDescriptorRef.current = null;
+        setCapturedDescriptor(null);
+        setScanStatus("Camera error");
+      }
+    }, DETECTION_INTERVAL_MS);
+  };
+
+  const startCamera = async () => {
+    setScanStatus("Starting camera...");
+    setCameraReady(false);
+    setCapturedDescriptor(null);
+    latestDescriptorRef.current = null;
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: "user",
+          width: { ideal: CAMERA_WIDTH },
+          height: { ideal: CAMERA_HEIGHT },
+          aspectRatio: { ideal: 3 / 4 },
+        },
+        audio: false,
+      });
+
+      streamRef.current = stream;
+
+      if (!videoRef.current) {
+        setScanStatus("Camera unavailable");
+        return;
+      }
+
+      videoRef.current.srcObject = stream;
+
+      await new Promise((resolve) => {
+        const video = videoRef.current;
+        if (!video) return resolve();
+
+        if (video.readyState >= 1 && video.videoWidth > 0) {
+          resolve();
+          return;
+        }
+
+        const handleLoaded = () => {
+          video.removeEventListener("loadedmetadata", handleLoaded);
+          resolve();
+        };
+
+        video.addEventListener("loadedmetadata", handleLoaded);
+      });
+
+      await videoRef.current.play();
+
+      setCameraReady(true);
+      setScanStatus("Camera ready");
+      startDetectionLoop();
+    } catch (error) {
+      console.error("Camera access error:", error);
+      setScanStatus("Camera permission denied");
+      setCameraReady(false);
+    }
   };
 
   const openRegistrationModal = async (user) => {
+    releaseMedia();
     setRegisteringUser(user);
+    setModelsLoaded(false);
+    setCameraReady(false);
     setCapturedDescriptor(null);
+    latestDescriptorRef.current = null;
+    setIsSaving(false);
     setShowSuccess(false);
-    setScanStatus("Loading AI Models...");
+    setScanStatus("Loading models...");
+
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+
     try {
-      const MODEL_URL = '/models';
+      const MODEL_URL = "/models";
       await Promise.all([
         faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
         faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
         faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
       ]);
+
+      if (!mountedRef.current) return;
+
       setModelsLoaded(true);
-      startCamera();
-    } catch (err) { setScanStatus("Failed to load AI models. Check network."); }
-  };
-
-  const startCamera = async () => {
-    setScanStatus("Align face within the frame...");
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
-      streamRef.current = stream;
-      if (videoRef.current) videoRef.current.srcObject = stream;
-    } catch (err) { setScanStatus("Camera access denied. Please allow permissions."); }
-  };
-
-  const stopCamera = () => {
-    if (streamRef.current) streamRef.current.getTracks().forEach(track => track.stop());
-    setRegisteringUser(null);
-    setModelsLoaded(false);
-    setCapturedDescriptor(null);
-    setShowSuccess(false);
-  };
-
-  const handleVideoPlay = () => {
-    if (!modelsLoaded) return;
-    const canvas = canvasRef.current;
-    if (canvas && videoRef.current) {
-      canvas.innerHTML = faceapi.createCanvasFromMedia(videoRef.current);
-      const displaySize = { width: videoRef.current.videoWidth, height: videoRef.current.videoHeight };
-      faceapi.matchDimensions(canvas, displaySize);
-
-      const detectionInterval = setInterval(async () => {
-        if (!videoRef.current || isSaving || showSuccess) return;
-        const detection = await faceapi.detectSingleFace(videoRef.current, new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks().withFaceDescriptor();
-        
-        const ctx = canvas.getContext("2d");
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-        if (detection) {
-          faceapi.draw.drawDetections(canvas, faceapi.resizeResults(detection, displaySize));
-          if (detection.detection.score > 0.85) {
-            setCapturedDescriptor(detection.descriptor);
-            setScanStatus("Face aligned. Ready to capture.");
-          } else {
-            setCapturedDescriptor(null);
-            setScanStatus("Please hold still...");
-          }
-        } else {
-          setCapturedDescriptor(null);
-        }
-      }, 400); 
-      
-      return () => clearInterval(detectionInterval);
+      await startCamera();
+    } catch (error) {
+      console.error("Model load error:", error);
+      setScanStatus("Failed to load models");
     }
   };
 
   const saveFaceDescriptor = async () => {
-    if (!capturedDescriptor) return;
+    const descriptorToSave = latestDescriptorRef.current || capturedDescriptor;
+    if (!descriptorToSave || !registeringUser || !session) return;
+
     setIsSaving(true);
-    setScanStatus("Locking biometric data to Vault...");
-    
-    const res = await callApi("register_face", {
-      user_id: registeringUser.id,
-      manager_id: session.id,
-      branch_id: session.branch_id,
-      descriptor: JSON.stringify(Array.from(capturedDescriptor)) 
-    });
 
-    if (res.status === "success") {
-      setIsSaving(false);
-      setShowSuccess(true); // Trigger UI Success State
-      setScanStatus("Face registered successfully.");
-      
-      // Wait 1.5 seconds so the user can see the success message, then close and refresh
-      setTimeout(() => {
-        stopCamera();
-        fetchStaff(session.branch_id); 
-      }, 1500);
+    try {
+      const res = await callApi("register_face", {
+        user_id: registeringUser.id,
+        manager_id: session.id,
+        branch_id: session.branch_id,
+        descriptor: JSON.stringify(Array.from(descriptorToSave)),
+      });
 
-    } else {
-      alert(res.message);
-      setScanStatus("Failed to save. Try again.");
+      if (res?.status === "success") {
+        setShowSuccess(true);
+        setIsSaving(false);
+
+        setTimeout(async () => {
+          releaseMedia();
+          setRegisteringUser(null);
+          setModelsLoaded(false);
+          setCameraReady(false);
+          setCapturedDescriptor(null);
+          latestDescriptorRef.current = null;
+          setShowSuccess(false);
+          setScanStatus("Starting...");
+          await fetchStaff(session.branch_id);
+        }, 1000);
+      } else {
+        setIsSaving(false);
+        setScanStatus(res?.message || "Save failed");
+      }
+    } catch (error) {
+      console.error("Register face error:", error);
       setIsSaving(false);
+      setScanStatus("Save failed");
     }
   };
 
+  const canModifyFaces = session
+    ? canWrite(session.feature_permissions, "register_face")
+    : false;
+
+  const registeredCount = useMemo(
+    () => staff.filter((user) => hasRegisteredFace(user)).length,
+    [staff]
+  );
+
   if (!session) return null;
 
-  // ─── GATEKEEPER: WRITE ACCESS ───
-  const canModifyFaces = canWrite(session.feature_permissions, 'register_face');
-
   return (
-    <div className="text-gray-900 dark:text-neutral-200 font-sans animate-in fade-in duration-500 pb-24 px-3 md:px-0">
-      <div className="space-y-6 md:space-y-8 max-w-5xl mx-auto">
-        
-        {/* ── HEADER ── */}
-        <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 bg-white/60 dark:bg-neutral-900/40 p-5 md:p-6 rounded-3xl backdrop-blur-xl border border-gray-200/60 dark:border-neutral-800/60 shadow-sm mt-3 md:mt-0">
-          <div>
-            <div className="flex items-center gap-2 text-purple-600 dark:text-purple-500 mb-1">
-              <Users size={14} className="shrink-0" />
-              <span className="text-[10px] md:text-xs font-black tracking-[0.2em] uppercase truncate">Branch Operations</span>
+    <div className="min-h-screen bg-slate-50 text-slate-900">
+      <div className="mx-auto w-full max-w-7xl px-4 py-4 sm:px-6 sm:py-6 lg:px-8">
+        <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+          <div className="flex flex-col gap-4 border-b border-slate-200 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-6">
+            <div>
+              <h1 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
+                Branch Staff
+              </h1>
+              <p className="mt-1 text-sm text-slate-500">
+                Total: {staff.length} | Registered: {registeredCount}
+              </p>
             </div>
-            <h1 className="text-2xl md:text-3xl font-black text-gray-900 dark:text-white tracking-tight">
-              Staff Roster & Biometrics
-            </h1>
-            <p className="text-sm text-gray-500 dark:text-neutral-400 mt-1.5 font-medium max-w-md">
-              Manage employees and securely assign their facial recognition vectors for the terminal.
-            </p>
+
+            <button
+              onClick={() => fetchStaff(session.branch_id)}
+              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 active:scale-[0.99]"
+            >
+              <RefreshCcw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+              Refresh
+            </button>
           </div>
 
-          {!canModifyFaces && (
-            <div className="bg-yellow-50 dark:bg-yellow-500/10 px-4 py-2.5 rounded-xl border border-yellow-200 dark:border-yellow-900/50 flex items-center gap-2 text-yellow-700 dark:text-yellow-500 text-xs font-bold shrink-0">
-               <ShieldAlert size={16}/> Read-Only Mode
+          {loading ? (
+            <div className="flex min-h-[220px] items-center justify-center px-4 py-16 text-slate-500">
+              <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <Loader2 className="h-5 w-5 animate-spin" />
+                <span className="text-sm font-medium">Fetching local roster...</span>
+              </div>
             </div>
+          ) : staff.length === 0 ? (
+            <div className="flex min-h-[220px] items-center justify-center px-4 py-16 text-slate-500">
+              No staff found.
+            </div>
+          ) : (
+            <>
+              <div className="hidden overflow-x-auto md:block">
+                <table className="min-w-full">
+                  <thead className="bg-slate-50">
+                    <tr className="border-b border-slate-200 text-left">
+                      <th className="px-6 py-4 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                        Name
+                      </th>
+                      <th className="px-6 py-4 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                        Department
+                      </th>
+                      <th className="px-6 py-4 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                        Status
+                      </th>
+                      <th className="px-6 py-4 text-right text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                        Action
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {staff.map((user) => {
+                      const registered = hasRegisteredFace(user);
+
+                      return (
+                        <tr key={user.id} className="border-b border-slate-100 last:border-b-0">
+                          <td className="px-6 py-4">
+                            <div className="font-semibold text-slate-900">{user.name}</div>
+                          </td>
+                          <td className="px-6 py-4 text-slate-600">
+                            {getDepartmentLabel(user)}
+                          </td>
+                          <td className="px-6 py-4">
+                            <span
+                              className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${
+                                registered
+                                  ? "bg-emerald-100 text-emerald-700"
+                                  : "bg-amber-100 text-amber-700"
+                              }`}
+                            >
+                              {registered ? "Registered" : "Pending"}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 text-right">
+                            {canModifyFaces ? (
+                              <button
+                                onClick={() => openRegistrationModal(user)}
+                                className={`inline-flex min-h-10 items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold text-white transition active:scale-[0.99] ${
+                                  registered
+                                    ? "bg-slate-900 hover:bg-slate-800"
+                                    : "bg-emerald-600 hover:bg-emerald-700"
+                                }`}
+                              >
+                                <ScanFace className="h-4 w-4" />
+                                {registered ? "Re-register" : "Register"}
+                              </button>
+                            ) : (
+                              <span className="text-sm text-slate-400">No access</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="divide-y divide-slate-200 md:hidden">
+                {staff.map((user) => {
+                  const registered = hasRegisteredFace(user);
+
+                  return (
+                    <div key={user.id} className="p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="truncate font-semibold text-slate-900">
+                            {user.name}
+                          </div>
+                          <div className="mt-1 text-sm text-slate-500">
+                            {getDepartmentLabel(user)}
+                          </div>
+                        </div>
+
+                        <span
+                          className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold ${
+                            registered
+                              ? "bg-emerald-100 text-emerald-700"
+                              : "bg-amber-100 text-amber-700"
+                          }`}
+                        >
+                          {registered ? "Registered" : "Pending"}
+                        </span>
+                      </div>
+
+                      <div className="mt-3">
+                        {canModifyFaces ? (
+                          <button
+                            onClick={() => openRegistrationModal(user)}
+                            className={`inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl px-4 py-3 text-sm font-semibold text-white transition active:scale-[0.99] ${
+                              registered
+                                ? "bg-slate-900 hover:bg-slate-800"
+                                : "bg-emerald-600 hover:bg-emerald-700"
+                            }`}
+                          >
+                            <ScanFace className="h-4 w-4" />
+                            {registered ? "Re-register Face" : "Register Face"}
+                          </button>
+                        ) : (
+                          <div className="text-sm text-slate-400">No access</div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
           )}
         </div>
+      </div>
 
-        {/* ── RESPONSIVE LIST / TABLE ── */}
-        {loading ? (
-          <div className="flex flex-col items-center justify-center py-32 space-y-4">
-            <Loader2 className="animate-spin text-purple-500" size={40} strokeWidth={2.5} />
-            <p className="text-sm font-bold text-gray-500 tracking-widest uppercase">Fetching Local Roster...</p>
-          </div>
-        ) : (
-          <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-3xl shadow-sm overflow-hidden">
-            {/* Desktop Table Header */}
-            <div className="hidden md:grid grid-cols-12 gap-4 p-5 border-b border-gray-100 dark:border-neutral-900 bg-gray-50/50 dark:bg-[#050505]/50 text-[10px] font-black text-gray-400 uppercase tracking-widest">
-              <div className="col-span-5">Employee Details</div>
-              <div className="col-span-4 text-center">Biometric Status</div>
-              <div className="col-span-3 text-right">Vault Action</div>
-            </div>
+      {registeringUser && (
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm">
+          <div className="flex h-full w-full items-end justify-center sm:items-center sm:p-4">
+            <div className="flex h-[100dvh] w-full flex-col overflow-hidden rounded-none bg-white sm:h-auto sm:max-h-[92dvh] sm:max-w-md sm:rounded-[28px]">
+              <div className="flex items-center justify-between border-b border-slate-200 px-4 py-4 sm:px-5">
+                <h2 className="truncate pr-3 text-base font-semibold text-slate-900">
+                  {registeringUser.name}
+                </h2>
 
-            {/* List Body */}
-            <div className="divide-y divide-gray-100 dark:divide-neutral-900">
-              {staff.map((user) => (
-                <div key={user.id} className="flex flex-col md:grid md:grid-cols-12 gap-4 p-5 md:items-center hover:bg-gray-50/50 dark:hover:bg-neutral-900/30 transition-colors group">
-                  
-                  {/* Mobile: Top Section (Name & Dept) | Desktop: Column 1 */}
-                  <div className="col-span-5 flex items-center gap-4">
-                    <div className="w-12 h-12 rounded-2xl bg-gray-100 dark:bg-neutral-800 text-gray-500 flex items-center justify-center text-sm font-black border border-gray-200 dark:border-neutral-700 shrink-0 shadow-inner">
-                      {user.name.charAt(0)}
-                    </div>
-                    <div className="min-w-0">
-                      <h3 className="font-black text-base text-gray-900 dark:text-white truncate">{user.name}</h3>
-                      <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500 mt-0.5 truncate">{user.department || "Standard Staff"}</p>
-                    </div>
-                  </div>
-                  
-                  {/* Mobile: Middle Section (Status Badge) | Desktop: Column 2 */}
-                  <div className="col-span-4 flex md:justify-center">
-                    {user.face_registered ? ( // FIXED FROM is_registered
-                      <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 rounded-xl font-black text-[10px] uppercase tracking-widest border border-emerald-200 dark:border-emerald-900/50">
-                        <CheckCircle2 size={14} /> Registered Active
-                      </div>
-                    ) : (
-                      <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gray-50 dark:bg-neutral-900 text-gray-500 dark:text-neutral-400 rounded-xl font-black text-[10px] uppercase tracking-widest border border-gray-200 dark:border-neutral-800 border-dashed">
-                         <AlertCircle size={14} /> Unregistered
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Mobile: Bottom Section (Action Button) | Desktop: Column 3 */}
-                  <div className="col-span-3 flex md:justify-end mt-2 md:mt-0">
-                    {canModifyFaces ? (
-                      user.face_registered ? ( // FIXED FROM is_registered
-                        <button onClick={() => openRegistrationModal(user)} className="w-full md:w-auto px-4 py-2.5 bg-gray-100 dark:bg-neutral-800 hover:bg-gray-200 dark:hover:bg-neutral-700 text-gray-700 dark:text-neutral-300 rounded-xl font-bold text-xs transition-colors flex items-center justify-center gap-2 border border-gray-200 dark:border-neutral-700">
-                          <RefreshCcw size={14} /> Re-Scan
-                        </button>
-                      ) : (
-                        <button onClick={() => openRegistrationModal(user)} className="w-full md:w-auto px-4 py-2.5 bg-purple-500 hover:bg-purple-600 text-white rounded-xl font-black text-xs uppercase tracking-widest transition-all shadow-lg shadow-purple-500/20 active:scale-95 flex items-center justify-center gap-2">
-                          <Camera size={16} /> Register Face
-                        </button>
-                      )
-                    ) : (
-                      <div className="w-full md:w-auto px-4 py-2 bg-transparent text-gray-400 dark:text-neutral-600 text-[10px] font-black uppercase tracking-widest text-center md:text-right">
-                        Action Locked
-                      </div>
-                    )}
-                  </div>
-
-                </div>
-              ))}
-              {staff.length === 0 && (
-                <div className="p-12 text-center text-gray-400 font-bold">No staff assigned to this branch.</div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* ── MOBILE-OPTIMIZED REGISTRATION MODAL ── */}
-        {registeringUser && canModifyFaces && (
-          <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[100] flex items-end md:items-center justify-center sm:p-4 animate-in fade-in duration-200">
-            <div className="bg-white dark:bg-neutral-900 border border-gray-200 dark:border-neutral-800 rounded-t-[2rem] md:rounded-3xl w-full max-w-md overflow-hidden shadow-2xl flex flex-col animate-in slide-in-from-bottom-full md:zoom-in-95 duration-300 max-h-[90dvh] relative">
-              
-              <div className="p-5 flex justify-between items-center bg-gray-50/50 dark:bg-neutral-900/50 border-b border-gray-100 dark:border-neutral-800 shrink-0">
-                <div>
-                  <h3 className="font-black flex items-center gap-2 text-gray-900 dark:text-white">
-                    <ScanFace size={18} className="text-purple-500"/> Secure Vault Entry
-                  </h3>
-                  <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mt-1">Registering: {registeringUser.name}</p>
-                </div>
-                {!isSaving && !showSuccess && (
-                  <button onClick={stopCamera} className="p-2 bg-gray-200 dark:bg-neutral-800 rounded-full hover:bg-gray-300 dark:hover:bg-neutral-700 transition-colors"><X size={16} className="text-gray-600 dark:text-neutral-300" /></button>
-                )}
-              </div>
-
-              {/* Video Area */}
-              <div className="relative aspect-[3/4] md:aspect-square bg-black flex items-center justify-center overflow-hidden shrink-0">
-                <video ref={videoRef} onPlay={handleVideoPlay} autoPlay muted playsInline className="absolute inset-0 w-full h-full object-cover" />
-                <canvas ref={canvasRef} className="absolute inset-0 w-full h-full object-cover" />
-                
-                {/* Face Target Guide overlay */}
-                <div className="absolute inset-0 border-[8px] border-black/30 pointer-events-none md:rounded-3xl z-10"></div>
-                
-                {/* Saving Overlay */}
-                {isSaving && (
-                  <div className="absolute inset-0 bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center text-purple-400 z-30 animate-in fade-in">
-                    <Loader2 className="animate-spin mb-4" size={48} strokeWidth={2.5}/>
-                    <p className="font-black text-sm tracking-[0.2em] uppercase">Encrypting to Vault</p>
-                  </div>
-                )}
-
-                {/* HIGH-END SUCCESS OVERLAY */}
-                {showSuccess && (
-                  <div className="absolute inset-0 bg-emerald-500/90 backdrop-blur-md flex flex-col items-center justify-center text-white z-40 animate-in zoom-in-95 duration-200">
-                    <CheckCircle2 className="mb-4" size={64} strokeWidth={2.5} />
-                    <p className="font-black text-lg tracking-[0.2em] uppercase">Identity Locked</p>
-                  </div>
-                )}
-              </div>
-
-              {/* Control Panel (Fixed to bottom for mobile) */}
-              <div className="p-5 bg-white dark:bg-[#0a0a0a] border-t border-gray-100 dark:border-neutral-800 flex flex-col gap-4 shrink-0 pb-safe">
-                <div className="flex items-center justify-center gap-2 text-center">
-                  {capturedDescriptor ? <CheckCircle2 size={16} className="text-emerald-500" /> : (!showSuccess && !isSaving && <Loader2 size={16} className="animate-spin text-gray-500" />)}
-                  <span className={`text-[10px] md:text-xs font-black uppercase tracking-widest ${capturedDescriptor || showSuccess ? 'text-emerald-500' : 'text-gray-500 dark:text-neutral-400'}`}>
-                    {scanStatus}
-                  </span>
-                </div>
-                
-                <button 
-                  onClick={saveFaceDescriptor} 
-                  disabled={!capturedDescriptor || isSaving || showSuccess}
-                  className="w-full py-4 bg-purple-500 hover:bg-purple-600 disabled:bg-gray-100 disabled:text-gray-400 disabled:border-gray-200 disabled:dark:bg-[#111] disabled:dark:text-neutral-600 disabled:dark:border-neutral-800 disabled:shadow-none text-white border border-transparent font-black text-sm uppercase tracking-wider rounded-2xl transition-all shadow-lg shadow-purple-500/20 active:scale-[0.98]"
+                <button
+                  onClick={closeRegistrationModal}
+                  className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-600 transition hover:bg-slate-100"
+                  aria-label="Close biometric registration"
                 >
-                  Capture & Assign Identity
+                  <X className="h-5 w-5" />
                 </button>
               </div>
 
+              <div className="flex-1 overflow-y-auto p-4 sm:p-5">
+                <div className="relative overflow-hidden rounded-[28px] border border-slate-200 bg-slate-950 shadow-xl">
+                  <div className="relative aspect-[3/4] w-full">
+                    <video
+                      ref={videoRef}
+                      autoPlay
+                      muted
+                      playsInline
+                      className="absolute inset-0 h-full w-full object-cover"
+                      style={{ transform: "scaleX(-1)" }}
+                    />
+
+                    <canvas
+                      ref={canvasRef}
+                      className="absolute inset-0 h-full w-full"
+                      style={{ transform: "scaleX(-1)" }}
+                    />
+
+                    {!cameraReady && (
+                      <div className="absolute inset-0 flex items-center justify-center bg-slate-950/65 backdrop-blur-sm">
+                        <Loader2 className="h-8 w-8 animate-spin text-white" />
+                      </div>
+                    )}
+
+                    {showSuccess && (
+                      <div className="absolute inset-0 z-30 flex items-center justify-center bg-emerald-950/75 backdrop-blur-sm">
+                        <div className="flex flex-col items-center gap-3 text-center text-white">
+                          <div className="rounded-full bg-emerald-500/20 p-4">
+                            <CheckCircle2 className="h-12 w-12 text-emerald-300" />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="mt-4 grid grid-cols-2 gap-3">
+                  <button
+                    onClick={closeRegistrationModal}
+                    className="inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-100 active:scale-[0.99]"
+                  >
+                    <X className="h-4 w-4" />
+                    Cancel
+                  </button>
+
+                  <button
+                    onClick={saveFaceDescriptor}
+                    disabled={!capturedDescriptor || isSaving || !cameraReady}
+                    className="inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-emerald-700 active:scale-[0.99] disabled:cursor-not-allowed disabled:bg-emerald-300"
+                  >
+                    {isSaving ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Saving...
+                      </>
+                    ) : (
+                      <>
+                        <ScanFace className="h-4 w-4" />
+                        Capture
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                <div className="mt-3 text-center text-xs text-slate-400">
+                  {cameraReady ? scanStatus : modelsLoaded ? "Starting camera..." : "Loading models..."}
+                </div>
+              </div>
             </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
