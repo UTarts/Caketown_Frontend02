@@ -1,23 +1,26 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import { callApi } from "@/lib/apiClient";
 import {
   Building2, CalendarRange, ChevronDown, Loader2, Save, 
   Settings2, Plus, Trash2, ShieldCheck, MonitorSmartphone,
   CheckCircle2, XCircle, UserCog, Edit, KeyRound, MapPin, Users,
-  Briefcase, PlusCircle, X
+  Briefcase, X
 } from "lucide-react";
 
 const pad = (n, width = 2) => String(n).padStart(width, "0");
 
 export default function AdminSettingsPage() {
+  // FIXED: We now use standard Next.js hooks to safely track URL parameter changes
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  
   const [session, setSession] = useState(null);
   const [activeTab, setActiveTab] = useState("matrix");
   
   // -- MATRIX STATE --
-  const [branches, setBranches] = useState([]);
-  const [selectedBranchId, setSelectedBranchId] = useState("");
   const [rules4, setRules4] = useState([]);
   const [rules2, setRules2] = useState([]);
   
@@ -26,6 +29,7 @@ export default function AdminSettingsPage() {
   const [saving2, setSaving2] = useState(false);
 
   // -- BRANCH STATE --
+  const [branches, setBranches] = useState([]);
   const [branchFormModal, setBranchFormModal] = useState(null); 
   const [branchSubmitting, setBranchSubmitting] = useState(false);
 
@@ -37,18 +41,18 @@ export default function AdminSettingsPage() {
   const [departments, setDepartments] = useState([]);
   const [deptModal, setDeptModal] = useState(null);
   const [deptSubmitting, setDeptSubmitting] = useState(false);
+  
+  const [newRoleName, setNewRoleName] = useState("");
 
-  // Put this right below your useState declarations
+  // ─── FIXED: DYNAMIC URL LISTENER ───
   useEffect(() => {
-    // Safely read the URL on the client-side to avoid Static Export crashes
-    const params = new URLSearchParams(window.location.search);
-    const tab = params.get('tab');
-    if (tab) {
+    const tab = searchParams.get('tab');
+    if (tab && tab !== activeTab) {
       setActiveTab(tab);
-      // Clean up the URL silently so switching tabs manually later feels clean
-      window.history.replaceState(null, '', window.location.pathname);
+      // Silently clean the URL without triggering a page scroll or jump
+      router.replace('/admin/settings', { scroll: false });
     }
-  }, []);
+  }, [searchParams, activeTab, router]);
   
   useEffect(() => {
     const raw = localStorage.getItem("caketown_session");
@@ -66,7 +70,6 @@ export default function AdminSettingsPage() {
     
     if (bRes.status === "success") {
       setBranches(bRes.data || []);
-      if (!selectedBranchId && bRes.data.length > 0) setSelectedBranchId(bRes.data[0].id);
     }
     
     if (uRes.status === "success") setAdmins((uRes.data || []).filter(u => u.role === 'admin'));
@@ -74,20 +77,20 @@ export default function AdminSettingsPage() {
     if (dRes.status === "success") setDepartments(dRes.data || []);
     
     setLoading(false);
-  }, [selectedBranchId]);
+  }, []);
 
   useEffect(() => { fetchGlobals(); }, [fetchGlobals]);
 
   const fetchRules = useCallback(async () => {
-    if (!selectedBranchId || activeTab !== "matrix") return;
+    if (activeTab !== "matrix") return;
     setLoading(true);
-    const res = await callApi("get_branch_leave_rules", { branch_id: selectedBranchId });
+    const res = await callApi("get_leave_rules");
     if (res.status === "success") {
       setRules4((res.data["4"] || []).map(r => ({ min: r.min_working_days, max: r.max_days_exclusive || "", awarded: r.earned_paid_leaves })));
       setRules2((res.data["2"] || []).map(r => ({ min: r.min_working_days, max: r.max_days_exclusive || "", awarded: r.earned_paid_leaves })));
     }
     setLoading(false);
-  }, [selectedBranchId, activeTab]);
+  }, [activeTab]);
 
   useEffect(() => { fetchRules(); }, [fetchRules]);
 
@@ -109,7 +112,7 @@ export default function AdminSettingsPage() {
     }));
 
     setSaving(true);
-    const res = await callApi("save_leave_rules", { branch_id: selectedBranchId, cap, rules: formattedRules, admin_id: session?.id });
+    const res = await callApi("save_leave_rules", { cap, rules: formattedRules, admin_id: session?.id });
     if (res.status === "success") fetchRules();
     else alert(res.message || `Failed to save Tier ${cap} rules.`);
     setSaving(false);
@@ -182,54 +185,45 @@ export default function AdminSettingsPage() {
 
     setDeptSubmitting(true);
     
-    const url = process.env.NEXT_PUBLIC_API_URL || "https://your-hostinger-domain.com";
-    try {
-      const response = await fetch(`${url}/api.php`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: deptModal.action === 'create' ? 'create_department' : 'update_department',
-          id: deptModal.id,
-          department_name: deptModal.name,
-          roles: JSON.stringify(deptModal.roles),
-          admin_id: session?.id
-        })
-      });
-      const res = await response.json();
-      
-      if (res.status === "success") {
-        setDeptModal(null);
-        fetchGlobals();
-      } else {
-        alert(res.message || "Failed to save department.");
-      }
-    } catch (err) {
-      alert("Network error. Ensure the backend endpoint is created.");
+    const action = deptModal.action === 'create' ? 'create_department' : 'update_department';
+    const payload = {
+      department_name: deptModal.name,
+      roles: JSON.stringify(deptModal.roles),
+      admin_id: session?.id
+    };
+
+    if (deptModal.action === 'edit' && deptModal.id) {
+      payload.id = deptModal.id;
     }
+
+    const res = await callApi(action, payload);
+    
+    if (res.status === "success") {
+      setDeptModal(null);
+      fetchGlobals();
+    } else {
+      alert(res.message || "Failed to save department.");
+    }
+    
     setDeptSubmitting(false);
   };
 
   const deleteDept = async (id) => {
     if (!confirm("Are you sure you want to delete this department? Users assigned to this department will not be deleted, but their department field may act unexpectedly.")) return;
     
-    const url = process.env.NEXT_PUBLIC_API_URL || "https://your-hostinger-domain.com";
-    try {
-      const response = await fetch(`${url}/api.php`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'delete_department', id, admin_id: session?.id })
-      });
-      const res = await response.json();
-      if (res.status === "success") fetchGlobals();
-      else alert(res.message || "Failed to delete department.");
-    } catch (err) { alert("Network error."); }
+    const res = await callApi("delete_department", { id, admin_id: session?.id });
+    
+    if (res.status === "success") {
+      fetchGlobals();
+    } else {
+      alert(res.message || "Failed to delete department.");
+    }
   };
 
   const addRoleToModal = () => {
-    const input = document.getElementById("newRoleInput");
-    if (!input || !input.value.trim()) return;
-    setDeptModal(prev => ({ ...prev, roles: [...prev.roles, input.value.trim()] }));
-    input.value = "";
+    if (!newRoleName.trim()) return;
+    setDeptModal(prev => ({ ...prev, roles: [...prev.roles, newRoleName.trim()] }));
+    setNewRoleName(""); 
   };
 
   const removeRoleFromModal = (idx) => {
@@ -276,121 +270,101 @@ export default function AdminSettingsPage() {
               TAB 1: LEAVE MATRIX
           ══════════════════════════════════════════════════════════════════ */}
           {activeTab === "matrix" && (
-            <>
-              <div className="xl:col-span-1 space-y-6">
-                <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-3xl p-5 md:p-6 shadow-sm">
-                  <h3 className="text-sm font-black text-gray-900 dark:text-white uppercase tracking-widest flex items-center gap-2 mb-4">
-                    <MonitorSmartphone size={16} className="text-indigo-500" /> Target Environment
-                  </h3>
-                  <p className="text-xs text-gray-500 dark:text-neutral-400 mb-4 font-medium leading-relaxed">Select a branch to edit its specific algorithmic bounds for paid holiday accrual.</p>
-                  
-                  {branches.length === 0 ? (
-                    <div className="p-4 bg-gray-50 dark:bg-neutral-900 rounded-2xl text-center text-xs font-bold text-gray-400 border border-dashed border-gray-200 dark:border-neutral-800">No Branches Available</div>
-                  ) : (
-                    <div className="relative">
-                      <Building2 size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
-                      <select value={selectedBranchId} onChange={(e) => setSelectedBranchId(e.target.value)} className="w-full bg-gray-50 dark:bg-[#111] border border-gray-200 dark:border-neutral-800 rounded-2xl py-3.5 pl-11 pr-4 text-sm font-bold text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/50 transition-all appearance-none cursor-pointer">
-                        {branches.map(b => <option key={b.id} value={b.id}>{b.branch_name}</option>)}
-                      </select>
-                      <ChevronDown size={16} className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
-                    </div>
-                  )}
-                </div>
+            <div className="xl:col-span-3 space-y-6 max-w-4xl mx-auto w-full">
+              <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-3xl p-5 md:p-6 shadow-sm">
+                <h3 className="text-sm font-black text-gray-900 dark:text-white uppercase tracking-widest flex items-center gap-2 mb-2">
+                  <MonitorSmartphone size={16} className="text-indigo-500" /> Global Environment
+                </h3>
+                <p className="text-xs text-gray-500 dark:text-neutral-400 font-medium leading-relaxed">
+                  These algorithmic bounds for paid holiday accrual will apply uniformly across all active branches.
+                </p>
               </div>
 
-              <div className="xl:col-span-2 space-y-6">
-                {loading ? (
-                   <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-3xl p-16 flex flex-col items-center justify-center">
-                     <Loader2 className="animate-spin text-indigo-500 mb-4" size={32} />
-                     <p className="text-sm font-bold text-gray-500 uppercase tracking-widest animate-pulse">Loading Matrix...</p>
-                   </div>
-                ) : !selectedBranchId ? (
-                   <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-3xl p-16 flex flex-col items-center justify-center text-center">
-                     <Building2 size={40} className="text-gray-300 dark:text-neutral-700 mb-4" />
-                     <h3 className="text-lg font-black text-gray-900 dark:text-white">Select a Branch</h3>
-                     <p className="text-sm text-gray-500 mt-1">Please create or select a branch to configure its rules.</p>
-                   </div>
-                ) : (
-                  <>
-                    <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-3xl shadow-sm overflow-hidden">
-                      <div className="p-5 md:p-6 border-b border-gray-100 dark:border-neutral-900 bg-emerald-50/30 dark:bg-emerald-900/5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                        <div>
-                          <h3 className="text-sm font-black text-emerald-600 dark:text-emerald-500 uppercase tracking-widest flex items-center gap-2"><ShieldCheck size={16} /> Tier-A Configuration</h3>
-                          <p className="text-[10px] text-gray-500 dark:text-neutral-400 mt-1 font-bold uppercase tracking-widest">Matrix for max cap 4 leaves.</p>
-                        </div>
-                        <button onClick={() => addRuleRow(4)} className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-gray-100 dark:bg-neutral-900 hover:bg-emerald-100 dark:hover:bg-emerald-500/20 text-gray-700 dark:text-neutral-300 hover:text-emerald-700 dark:hover:text-emerald-400 text-xs font-black rounded-xl transition-colors shrink-0"><Plus size={14} strokeWidth={3} /> Add Row</button>
+              {loading ? (
+                 <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-3xl p-16 flex flex-col items-center justify-center">
+                   <Loader2 className="animate-spin text-indigo-500 mb-4" size={32} />
+                   <p className="text-sm font-bold text-gray-500 uppercase tracking-widest animate-pulse">Loading Matrix...</p>
+                 </div>
+              ) : (
+                <>
+                  <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-3xl shadow-sm overflow-hidden">
+                    <div className="p-5 md:p-6 border-b border-gray-100 dark:border-neutral-900 bg-emerald-50/30 dark:bg-emerald-900/5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                      <div>
+                        <h3 className="text-sm font-black text-emerald-600 dark:text-emerald-500 uppercase tracking-widest flex items-center gap-2"><ShieldCheck size={16} /> Tier-A Configuration</h3>
+                        <p className="text-[10px] text-gray-500 dark:text-neutral-400 mt-1 font-bold uppercase tracking-widest">Matrix for max cap 4 leaves.</p>
                       </div>
-                      <div className="w-full overflow-x-auto custom-scrollbar">
-                        <table className="w-full text-left min-w-[500px]">
-                          <thead>
-                            <tr className="bg-gray-50/50 dark:bg-[#111] border-b border-gray-200 dark:border-neutral-800 text-[10px] font-black text-gray-400 uppercase tracking-widest">
-                              <th className="p-4 w-1/3">Min. Days (≥)</th>
-                              <th className="p-4 w-1/3">Max. Days (&lt;)</th>
-                              <th className="p-4 w-1/4 text-center">Earned</th>
-                              <th className="p-4 w-12 text-center"></th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-gray-100 dark:divide-neutral-900">
-                            {rules4.map((rule, idx) => (
-                              <tr key={idx} className="hover:bg-gray-50 dark:hover:bg-neutral-900/30 transition-colors group">
-                                <td className="p-2 border-r border-gray-100 dark:border-neutral-900"><input type="number" step="0.1" value={rule.min} onChange={(e) => updateRule(4, idx, 'min', e.target.value)} placeholder="0" className="w-full bg-transparent p-2 text-sm font-mono font-black text-gray-900 dark:text-white outline-none focus:bg-emerald-50 dark:focus:bg-emerald-900/20 rounded-lg transition-colors" /></td>
-                                <td className="p-2 border-r border-gray-100 dark:border-neutral-900"><input type="number" step="0.1" value={rule.max} onChange={(e) => updateRule(4, idx, 'max', e.target.value)} placeholder="Infinity" className="w-full bg-transparent p-2 text-sm font-mono font-black text-gray-900 dark:text-white outline-none focus:bg-emerald-50 dark:focus:bg-emerald-900/20 rounded-lg transition-colors" /></td>
-                                <td className="p-2 border-r border-gray-100 dark:border-neutral-900"><input type="number" value={rule.awarded} onChange={(e) => updateRule(4, idx, 'awarded', e.target.value)} placeholder="0" className="w-full text-center bg-transparent p-2 text-sm font-mono font-black text-emerald-600 dark:text-emerald-400 outline-none focus:bg-emerald-50 dark:focus:bg-emerald-900/20 rounded-lg transition-colors" /></td>
-                                <td className="p-2 text-center"><button onClick={() => removeRuleRow(4, idx)} className="p-2 text-gray-300 dark:text-neutral-700 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg transition-colors"><Trash2 size={16} /></button></td>
-                              </tr>
-                            ))}
-                            {rules4.length === 0 && <tr><td colSpan={4} className="p-6 text-center text-sm font-bold text-gray-400">No rules defined.</td></tr>}
-                          </tbody>
-                        </table>
-                      </div>
-                      <div className="p-4 border-t border-gray-100 dark:border-neutral-900 bg-gray-50/50 dark:bg-[#111]">
-                        <button onClick={() => saveRulesMatrix(4)} disabled={saving4} className="w-full py-3.5 bg-emerald-500 hover:bg-emerald-600 text-white text-sm font-black rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20 disabled:opacity-50 transition-all active:scale-[0.98]">
-                          {saving4 ? <Loader2 className="animate-spin" size={18} /> : <Save size={18} strokeWidth={2.5} />} Save Tier-A Matrix
-                        </button>
-                      </div>
+                      <button onClick={() => addRuleRow(4)} className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-gray-100 dark:bg-neutral-900 hover:bg-emerald-100 dark:hover:bg-emerald-500/20 text-gray-700 dark:text-neutral-300 hover:text-emerald-700 dark:hover:text-emerald-400 text-xs font-black rounded-xl transition-colors shrink-0"><Plus size={14} strokeWidth={3} /> Add Row</button>
                     </div>
+                    <div className="w-full overflow-x-auto custom-scrollbar">
+                      <table className="w-full text-left min-w-[500px]">
+                        <thead>
+                          <tr className="bg-gray-50/50 dark:bg-[#111] border-b border-gray-200 dark:border-neutral-800 text-[10px] font-black text-gray-400 uppercase tracking-widest">
+                            <th className="p-4 w-1/3">Min. Days (≥)</th>
+                            <th className="p-4 w-1/3">Max. Days (&lt;)</th>
+                            <th className="p-4 w-1/4 text-center">Earned</th>
+                            <th className="p-4 w-12 text-center"></th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100 dark:divide-neutral-900">
+                          {rules4.map((rule, idx) => (
+                            <tr key={idx} className="hover:bg-gray-50 dark:hover:bg-neutral-900/30 transition-colors group">
+                              <td className="p-2 border-r border-gray-100 dark:border-neutral-900"><input type="number" step="0.1" value={rule.min} onChange={(e) => updateRule(4, idx, 'min', e.target.value)} placeholder="0" className="w-full bg-transparent p-2 text-sm font-mono font-black text-gray-900 dark:text-white outline-none focus:bg-emerald-50 dark:focus:bg-emerald-900/20 rounded-lg transition-colors" /></td>
+                              <td className="p-2 border-r border-gray-100 dark:border-neutral-900"><input type="number" step="0.1" value={rule.max} onChange={(e) => updateRule(4, idx, 'max', e.target.value)} placeholder="Infinity" className="w-full bg-transparent p-2 text-sm font-mono font-black text-gray-900 dark:text-white outline-none focus:bg-emerald-50 dark:focus:bg-emerald-900/20 rounded-lg transition-colors" /></td>
+                              <td className="p-2 border-r border-gray-100 dark:border-neutral-900"><input type="number" value={rule.awarded} onChange={(e) => updateRule(4, idx, 'awarded', e.target.value)} placeholder="0" className="w-full text-center bg-transparent p-2 text-sm font-mono font-black text-emerald-600 dark:text-emerald-400 outline-none focus:bg-emerald-50 dark:focus:bg-emerald-900/20 rounded-lg transition-colors" /></td>
+                              <td className="p-2 text-center"><button onClick={() => removeRuleRow(4, idx)} className="p-2 text-gray-300 dark:text-neutral-700 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg transition-colors"><Trash2 size={16} /></button></td>
+                            </tr>
+                          ))}
+                          {rules4.length === 0 && <tr><td colSpan={4} className="p-6 text-center text-sm font-bold text-gray-400">No rules defined.</td></tr>}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="p-4 border-t border-gray-100 dark:border-neutral-900 bg-gray-50/50 dark:bg-[#111]">
+                      <button onClick={() => saveRulesMatrix(4)} disabled={saving4} className="w-full py-3.5 bg-emerald-500 hover:bg-emerald-600 text-white text-sm font-black rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20 disabled:opacity-50 transition-all active:scale-[0.98]">
+                        {saving4 ? <Loader2 className="animate-spin" size={18} /> : <Save size={18} strokeWidth={2.5} />} Save Tier-A Matrix
+                      </button>
+                    </div>
+                  </div>
 
-                    <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-3xl shadow-sm overflow-hidden">
-                      <div className="p-5 md:p-6 border-b border-gray-100 dark:border-neutral-900 bg-blue-50/30 dark:bg-blue-900/5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                        <div>
-                          <h3 className="text-sm font-black text-blue-600 dark:text-blue-500 uppercase tracking-widest flex items-center gap-2"><ShieldCheck size={16} /> Tier-B Configuration</h3>
-                          <p className="text-[10px] text-gray-500 dark:text-neutral-400 mt-1 font-bold uppercase tracking-widest">Matrix for max cap 2 leaves.</p>
-                        </div>
-                        <button onClick={() => addRuleRow(2)} className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-gray-100 dark:bg-neutral-900 hover:bg-blue-100 dark:hover:bg-blue-500/20 text-gray-700 dark:text-neutral-300 hover:text-blue-700 dark:hover:text-blue-400 text-xs font-black rounded-xl transition-colors shrink-0"><Plus size={14} strokeWidth={3} /> Add Row</button>
+                  <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-3xl shadow-sm overflow-hidden">
+                    <div className="p-5 md:p-6 border-b border-gray-100 dark:border-neutral-900 bg-blue-50/30 dark:bg-blue-900/5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                      <div>
+                        <h3 className="text-sm font-black text-blue-600 dark:text-blue-500 uppercase tracking-widest flex items-center gap-2"><ShieldCheck size={16} /> Tier-B Configuration</h3>
+                        <p className="text-[10px] text-gray-500 dark:text-neutral-400 mt-1 font-bold uppercase tracking-widest">Matrix for max cap 2 leaves.</p>
                       </div>
-                      <div className="w-full overflow-x-auto custom-scrollbar">
-                        <table className="w-full text-left min-w-[500px]">
-                          <thead>
-                            <tr className="bg-gray-50/50 dark:bg-[#111] border-b border-gray-200 dark:border-neutral-800 text-[10px] font-black text-gray-400 uppercase tracking-widest">
-                              <th className="p-4 w-1/3">Min. Days (≥)</th>
-                              <th className="p-4 w-1/3">Max. Days (&lt;)</th>
-                              <th className="p-4 w-1/4 text-center">Earned</th>
-                              <th className="p-4 w-12 text-center"></th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-gray-100 dark:divide-neutral-900">
-                            {rules2.map((rule, idx) => (
-                              <tr key={idx} className="hover:bg-gray-50 dark:hover:bg-neutral-900/30 transition-colors group">
-                                <td className="p-2 border-r border-gray-100 dark:border-neutral-900"><input type="number" step="0.1" value={rule.min} onChange={(e) => updateRule(2, idx, 'min', e.target.value)} placeholder="0" className="w-full bg-transparent p-2 text-sm font-mono font-black text-gray-900 dark:text-white outline-none focus:bg-blue-50 dark:focus:bg-blue-900/20 rounded-lg transition-colors" /></td>
-                                <td className="p-2 border-r border-gray-100 dark:border-neutral-900"><input type="number" step="0.1" value={rule.max} onChange={(e) => updateRule(2, idx, 'max', e.target.value)} placeholder="Infinity" className="w-full bg-transparent p-2 text-sm font-mono font-black text-gray-900 dark:text-white outline-none focus:bg-blue-50 dark:focus:bg-blue-900/20 rounded-lg transition-colors" /></td>
-                                <td className="p-2 border-r border-gray-100 dark:border-neutral-900"><input type="number" value={rule.awarded} onChange={(e) => updateRule(2, idx, 'awarded', e.target.value)} placeholder="0" className="w-full text-center bg-transparent p-2 text-sm font-mono font-black text-blue-600 dark:text-blue-400 outline-none focus:bg-blue-50 dark:focus:bg-blue-900/20 rounded-lg transition-colors" /></td>
-                                <td className="p-2 text-center"><button onClick={() => removeRuleRow(2, idx)} className="p-2 text-gray-300 dark:text-neutral-700 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg transition-colors"><Trash2 size={16} /></button></td>
-                              </tr>
-                            ))}
-                            {rules2.length === 0 && <tr><td colSpan={4} className="p-6 text-center text-sm font-bold text-gray-400">No rules defined.</td></tr>}
-                          </tbody>
-                        </table>
-                      </div>
-                      <div className="p-4 border-t border-gray-100 dark:border-neutral-900 bg-gray-50/50 dark:bg-[#111]">
-                        <button onClick={() => saveRulesMatrix(2)} disabled={saving2} className="w-full py-3.5 bg-blue-500 hover:bg-blue-600 text-white text-sm font-black rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-blue-500/20 disabled:opacity-50 transition-all active:scale-[0.98]">
-                          {saving2 ? <Loader2 className="animate-spin" size={18} /> : <Save size={18} strokeWidth={2.5} />} Save Tier-B Matrix
-                        </button>
-                      </div>
+                      <button onClick={() => addRuleRow(2)} className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-gray-100 dark:bg-neutral-900 hover:bg-blue-100 dark:hover:bg-blue-500/20 text-gray-700 dark:text-neutral-300 hover:text-blue-700 dark:hover:text-blue-400 text-xs font-black rounded-xl transition-colors shrink-0"><Plus size={14} strokeWidth={3} /> Add Row</button>
                     </div>
-                  </>
-                )}
-              </div>
-            </>
+                    <div className="w-full overflow-x-auto custom-scrollbar">
+                      <table className="w-full text-left min-w-[500px]">
+                        <thead>
+                          <tr className="bg-gray-50/50 dark:bg-[#111] border-b border-gray-200 dark:border-neutral-800 text-[10px] font-black text-gray-400 uppercase tracking-widest">
+                            <th className="p-4 w-1/3">Min. Days (≥)</th>
+                            <th className="p-4 w-1/3">Max. Days (&lt;)</th>
+                            <th className="p-4 w-1/4 text-center">Earned</th>
+                            <th className="p-4 w-12 text-center"></th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100 dark:divide-neutral-900">
+                          {rules2.map((rule, idx) => (
+                            <tr key={idx} className="hover:bg-gray-50 dark:hover:bg-neutral-900/30 transition-colors group">
+                              <td className="p-2 border-r border-gray-100 dark:border-neutral-900"><input type="number" step="0.1" value={rule.min} onChange={(e) => updateRule(2, idx, 'min', e.target.value)} placeholder="0" className="w-full bg-transparent p-2 text-sm font-mono font-black text-gray-900 dark:text-white outline-none focus:bg-blue-50 dark:focus:bg-blue-900/20 rounded-lg transition-colors" /></td>
+                              <td className="p-2 border-r border-gray-100 dark:border-neutral-900"><input type="number" step="0.1" value={rule.max} onChange={(e) => updateRule(2, idx, 'max', e.target.value)} placeholder="Infinity" className="w-full bg-transparent p-2 text-sm font-mono font-black text-gray-900 dark:text-white outline-none focus:bg-blue-50 dark:focus:bg-blue-900/20 rounded-lg transition-colors" /></td>
+                              <td className="p-2 border-r border-gray-100 dark:border-neutral-900"><input type="number" value={rule.awarded} onChange={(e) => updateRule(2, idx, 'awarded', e.target.value)} placeholder="0" className="w-full text-center bg-transparent p-2 text-sm font-mono font-black text-blue-600 dark:text-blue-400 outline-none focus:bg-blue-50 dark:focus:bg-blue-900/20 rounded-lg transition-colors" /></td>
+                              <td className="p-2 text-center"><button onClick={() => removeRuleRow(2, idx)} className="p-2 text-gray-300 dark:text-neutral-700 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg transition-colors"><Trash2 size={16} /></button></td>
+                            </tr>
+                          ))}
+                          {rules2.length === 0 && <tr><td colSpan={4} className="p-6 text-center text-sm font-bold text-gray-400">No rules defined.</td></tr>}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="p-4 border-t border-gray-100 dark:border-neutral-900 bg-gray-50/50 dark:bg-[#111]">
+                      <button onClick={() => saveRulesMatrix(2)} disabled={saving2} className="w-full py-3.5 bg-blue-500 hover:bg-blue-600 text-white text-sm font-black rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-blue-500/20 disabled:opacity-50 transition-all active:scale-[0.98]">
+                        {saving2 ? <Loader2 className="animate-spin" size={18} /> : <Save size={18} strokeWidth={2.5} />} Save Tier-B Matrix
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
           )}
 
           {/* ══════════════════════════════════════════════════════════════════
@@ -404,7 +378,7 @@ export default function AdminSettingsPage() {
                      <h2 className="text-lg font-black text-gray-900 dark:text-white">Organization Structure</h2>
                      <p className="text-xs text-gray-500 font-bold uppercase tracking-widest mt-1">Manage departments and designations</p>
                    </div>
-                   <button onClick={() => setDeptModal({action: 'create', name: '', roles: []})} className="flex items-center gap-2 px-4 py-2.5 bg-gray-900 hover:bg-black dark:bg-white dark:hover:bg-gray-200 text-white dark:text-black text-xs font-black uppercase tracking-widest rounded-xl transition-all shadow-lg active:scale-95">
+                   <button onClick={() => { setDeptModal({action: 'create', name: '', roles: []}); setNewRoleName(""); }} className="flex items-center gap-2 px-4 py-2.5 bg-gray-900 hover:bg-black dark:bg-white dark:hover:bg-gray-200 text-white dark:text-black text-xs font-black uppercase tracking-widest rounded-xl transition-all shadow-lg active:scale-95">
                      <Plus size={14} strokeWidth={3} /> Add Department
                    </button>
                 </div>
@@ -418,7 +392,7 @@ export default function AdminSettingsPage() {
                         <div className="flex justify-between items-start mb-4">
                           <h3 className="font-black text-lg text-gray-900 dark:text-white">{dept.name}</h3>
                           <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button onClick={() => setDeptModal({action: 'edit', id: dept.id, name: dept.name, roles: dept.roles})} className="p-1.5 text-gray-500 hover:text-blue-500 bg-white dark:bg-black rounded-lg shadow-sm border border-gray-200 dark:border-neutral-800"><Edit size={14}/></button>
+                            <button onClick={() => { setDeptModal({action: 'edit', id: dept.id, name: dept.name, roles: dept.roles}); setNewRoleName(""); }} className="p-1.5 text-gray-500 hover:text-blue-500 bg-white dark:bg-black rounded-lg shadow-sm border border-gray-200 dark:border-neutral-800"><Edit size={14}/></button>
                             <button onClick={() => deleteDept(dept.id)} className="p-1.5 text-gray-500 hover:text-red-500 bg-white dark:bg-black rounded-lg shadow-sm border border-gray-200 dark:border-neutral-800"><Trash2 size={14}/></button>
                           </div>
                         </div>
@@ -590,7 +564,14 @@ export default function AdminSettingsPage() {
               <div className="space-y-1.5">
                 <label className="text-[10px] font-bold text-gray-500 dark:text-neutral-400 uppercase tracking-widest pl-1">Define Roles / Designations</label>
                 <div className="flex gap-2 mb-3">
-                  <input id="newRoleInput" type="text" placeholder="e.g. Executive Chef" onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addRoleToModal())} className="flex-1 bg-gray-50 dark:bg-[#111] border border-gray-200 dark:border-neutral-800 rounded-xl px-4 py-2.5 text-sm font-bold text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/50" />
+                  <input 
+                    type="text" 
+                    placeholder="e.g. Executive Chef" 
+                    value={newRoleName}
+                    onChange={(e) => setNewRoleName(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addRoleToModal())} 
+                    className="flex-1 bg-gray-50 dark:bg-[#111] border border-gray-200 dark:border-neutral-800 rounded-xl px-4 py-2.5 text-sm font-bold text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/50" 
+                  />
                   <button type="button" onClick={addRoleToModal} className="px-4 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 rounded-xl hover:bg-indigo-100 transition-colors border border-indigo-100 dark:border-indigo-900/50"><Plus size={18}/></button>
                 </div>
                 

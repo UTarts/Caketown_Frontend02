@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useState, useRef, Suspense } from "react";
-import { useRouter, usePathname } from "next/navigation";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
   LayoutDashboard, Building2, Users, Settings, LogOut, Banknote, Sun, Moon,
-  ChevronRight, Activity, CalendarDays, History, Menu, X, UserCircle2, Shield, ExternalLink, FileText, ChevronDown, CalendarRange
+  ChevronRight, Activity, CalendarDays, History, Menu, X, Shield, FileText, ChevronDown, CalendarRange
 } from "lucide-react";
 import { callApi, logout } from "@/lib/apiClient";
 
@@ -22,7 +22,8 @@ function AdminLayoutContent({ children }) {
   const [activeBranchId, setActiveBranchId] = useState("");
   const [branchesLoading, setBranchesLoading] = useState(true);
 
-  const profileMenuRef = useRef(null);
+  const desktopProfileRef = useRef(null);
+  const mobileProfileRef = useRef(null);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [reportsOpen, setReportsOpen] = useState(false);
@@ -35,12 +36,21 @@ function AdminLayoutContent({ children }) {
     document.documentElement.classList.toggle("dark", isDark);
 
     const handleClickOutside = (event) => {
-      if (profileMenuRef.current && !profileMenuRef.current.contains(event.target)) {
+      const inDesktop = desktopProfileRef.current && desktopProfileRef.current.contains(event.target);
+      const inMobile = mobileProfileRef.current && mobileProfileRef.current.contains(event.target);
+
+      if (!inDesktop && !inMobile) {
         setProfileMenuOpen(false);
       }
     };
+    
     document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+    document.addEventListener("touchstart", handleClickOutside, { passive: true });
+    
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("touchstart", handleClickOutside);
+    };
   }, []);
 
   useEffect(() => {
@@ -62,17 +72,19 @@ function AdminLayoutContent({ children }) {
       if (res.status === "success" && res.data?.length > 0) {
         const activeBranches = res.data;
         setBranches(activeBranches);
+        
         const params = new URLSearchParams(window.location.search);
-        const urlBranchId = params.get("branch_id");
-        if (urlBranchId && activeBranches.some(b => String(b.id) === urlBranchId)) {
-          setActiveBranchId(urlBranchId);
-        } else if (activeBranches.length > 0) {
-          const defaultId = String(activeBranches[0].id);
-          setActiveBranchId(defaultId);
-          if (pathname !== "/admin" && !pathname.startsWith("/admin/settings") && !pathname.startsWith("/admin/reports") && pathname !== "/admin/profile") {
-            router.replace(`${pathname}?branch_id=${defaultId}`);
+        let urlBranchId = params.get("branch_id");
+
+        // STRICT LOGIC: The layout now ONLY acknowledges physical branches.
+        if (!urlBranchId || !activeBranches.some(b => String(b.id) === urlBranchId)) {
+          urlBranchId = String(activeBranches[0].id);
+          if (!pathname.startsWith("/admin/settings") && !pathname.startsWith("/admin/reports")) {
+            router.replace(`${pathname}?branch_id=${urlBranchId}`, { scroll: false });
           }
         }
+
+        setActiveBranchId(urlBranchId);
       }
       setBranchesLoading(false);
     };
@@ -82,8 +94,8 @@ function AdminLayoutContent({ children }) {
   const handleBranchChange = (e) => {
     const newId = e.target.value;
     setActiveBranchId(newId);
-    if (pathname !== "/admin" && !pathname.startsWith("/admin/settings") && !pathname.startsWith("/admin/reports") && pathname !== "/admin/profile") {
-      router.push(`${pathname}?branch_id=${newId}`);
+    if (!pathname.startsWith("/admin/settings") && !pathname.startsWith("/admin/reports")) {
+      router.push(`${pathname}?branch_id=${newId}`, { scroll: false });
     }
   };
 
@@ -101,7 +113,7 @@ function AdminLayoutContent({ children }) {
   const initials = user.name.split(" ").map(n => n[0]).join("").substring(0, 2).toUpperCase();
 
   const globalNav = [
-    { name: "Admin Dashboard", path: "/admin", icon: LayoutDashboard, exact: true },
+    { name: "Admin Dashboard", path: `/admin?branch_id=${activeBranchId}`, icon: LayoutDashboard, exact: true },
   ];
 
   const branchNav = [
@@ -126,31 +138,31 @@ function AdminLayoutContent({ children }) {
   ];
 
   const mobileBottomNav = [
-    { name: "Overview", path: "/admin", icon: LayoutDashboard, exact: true },
+    { name: "Overview", path: `/admin?branch_id=${activeBranchId}`, icon: LayoutDashboard, exact: true },
     { name: "Floor", path: `/admin/live-floor?branch_id=${activeBranchId}`, icon: Activity },
     { name: "Staff", path: `/admin/personnel?branch_id=${activeBranchId}`, icon: Users },
     { name: "Ledger", path: `/admin/attendance?branch_id=${activeBranchId}`, icon: CalendarDays },
   ];
 
   const isActive = (path, exact = false) => {
-    if (exact) return pathname === path;
+    if (exact) return pathname === path.split('?')[0];
     const baseNavPath = path.split('?')[0];
     return pathname.startsWith(baseNavPath);
   };
 
   const handleSettingsClick = (tab) => {
     setMobileMenuOpen(false);
-    router.push(`/admin/settings?tab=${tab}`);
+    router.push(`/admin/settings?tab=${tab}`, { scroll: false });
   };
 
   const handleReportsClick = (tab) => {
     setMobileMenuOpen(false);
-    router.push(`/admin/reports?tab=${tab}`);
+    router.push(`/admin/reports?tab=${tab}`, { scroll: false });
   };
 
-  const sidebarContentUI = (
+  const renderSidebarContent = (menuRef) => (
     <>
-      <div className="h-24 w-full bg-white dark:bg-[#050505] shadow-[0_2px_15px_rgba(0,0,0,0.03)] shrink-0 flex flex-col justify-center px-6 relative z-10" style={{ clipPath: 'polygon(0 0, 100% 0, 100% 85%, 0 100%)' }}>
+      <div className="h-24 w-full bg-white shadow-[0_2px_15px_rgba(0,0,0,0.03)] shrink-0 flex flex-col justify-center px-6 relative z-10" style={{ clipPath: 'polygon(0 0, 100% 0, 100% 85%, 0 100%)' }}>
         <img src="/logo.png" alt="Caketown" className="h-10 w-auto object-contain object-center" onError={(e) => { e.target.style.display = 'none'; }} />
       </div>
 
@@ -162,7 +174,7 @@ function AdminLayoutContent({ children }) {
               const active = isActive(item.path, item.exact);
               const Icon = item.icon;
               return (
-                <Link key={item.name} href={item.path} onClick={() => setMobileMenuOpen(false)} className={`flex items-center gap-3 px-3 py-3 rounded-xl transition-all duration-200 font-bold text-sm ${active ? "bg-gray-100 dark:bg-neutral-800 text-gray-900 dark:text-white" : "text-gray-600 dark:text-neutral-400 hover:bg-gray-50 dark:hover:bg-neutral-900 hover:text-gray-900 dark:hover:text-white"}`}>
+                <Link key={item.name} href={item.path} scroll={false} onClick={() => setMobileMenuOpen(false)} className={`flex items-center gap-3 px-3 py-3 rounded-xl transition-all duration-200 font-bold text-sm ${active ? "bg-gray-100 dark:bg-neutral-800 text-gray-900 dark:text-white" : "text-gray-600 dark:text-neutral-400 hover:bg-gray-50 dark:hover:bg-neutral-900 hover:text-gray-900 dark:hover:text-white"}`}>
                   <Icon size={16} className={active ? 'text-gray-900 dark:text-white' : ''} strokeWidth={active ? 2.5 : 2} />
                   <span className="flex-1">{item.name}</span>
                 </Link>
@@ -194,7 +206,7 @@ function AdminLayoutContent({ children }) {
               const active = isActive(item.path);
               const Icon = item.icon;
               return (
-                <Link key={item.name} href={item.path} onClick={() => setMobileMenuOpen(false)} className={`flex items-center gap-3 px-3 py-3 rounded-xl transition-all duration-200 font-bold text-sm ${active ? "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" : "text-gray-600 dark:text-neutral-400 hover:bg-gray-50 dark:hover:bg-neutral-900 hover:text-gray-900 dark:hover:text-white"}`}>
+                <Link key={item.name} href={item.path} scroll={false} onClick={() => setMobileMenuOpen(false)} className={`flex items-center gap-3 px-3 py-3 rounded-xl transition-all duration-200 font-bold text-sm ${active ? "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" : "text-gray-600 dark:text-neutral-400 hover:bg-gray-50 dark:hover:bg-neutral-900 hover:text-gray-900 dark:hover:text-white"}`}>
                   <Icon size={16} className={active ? 'text-emerald-600 dark:text-emerald-400' : ''} strokeWidth={active ? 2.5 : 2} />
                   <span className="flex-1">{item.name}</span>
                 </Link>
@@ -246,8 +258,8 @@ function AdminLayoutContent({ children }) {
         </div>
       </nav>
 
-      <div className="p-4 border-t border-gray-100 dark:border-neutral-800 shrink-0 bg-white dark:bg-black z-10 flex items-center justify-between relative" ref={profileMenuRef}>
-        <button onClick={() => setProfileMenuOpen(!profileMenuOpen)} className="flex items-center gap-3 hover:bg-gray-50 dark:hover:bg-neutral-900 p-1.5 rounded-xl transition-colors text-left min-w-0 flex-1">
+      <div className="p-4 border-t border-gray-100 dark:border-neutral-800 shrink-0 bg-white dark:bg-black z-10 flex items-center justify-between relative" ref={menuRef}>
+        <button onClick={() => setProfileMenuOpen(!profileMenuOpen)} className="flex items-center gap-3 hover:bg-gray-50 dark:hover:bg-neutral-900 p-1.5 rounded-xl transition-colors text-left min-w-0 flex-1 outline-none">
           <div className="w-10 h-10 rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 flex items-center justify-center font-black text-sm border border-emerald-200 dark:border-emerald-800 shrink-0">
             {initials}
           </div>
@@ -256,6 +268,7 @@ function AdminLayoutContent({ children }) {
             <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest truncate flex items-center gap-1"><Shield size={10} /> Admin</p>
           </div>
         </button>
+
         <div className="shrink-0 flex flex-col items-end justify-center pl-2 border-l border-gray-100 dark:border-neutral-800">
           <span className="text-[8px] font-black text-gray-400 uppercase tracking-widest mb-0.5">Powered By</span>
           <a href="https://www.utarts.in" target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 hover:opacity-80 transition-opacity">
@@ -263,44 +276,48 @@ function AdminLayoutContent({ children }) {
             <span className="font-black text-xs text-emerald-600 dark:text-emerald-400">UT Arts</span>
           </a>
         </div>
-        {profileMenuOpen && (
-          <div className="absolute bottom-[110%] left-4 right-4 bg-white dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-2xl shadow-xl p-2 mb-2 animate-in slide-in-from-bottom-2 duration-200 z-50">
-            <Link href="/admin/profile" onClick={() => setProfileMenuOpen(false)} className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-bold text-gray-700 dark:text-neutral-300 hover:bg-gray-50 dark:hover:bg-neutral-900 transition-colors">
-              <UserCircle2 size={16} /> Profile Settings
-            </Link>
-            <button onClick={toggleTheme} className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-bold text-gray-700 dark:text-neutral-300 hover:bg-gray-50 dark:hover:bg-neutral-900 transition-colors">
-              {dark ? <Sun size={16} /> : <Moon size={16} />} Switch to {dark ? "Light" : "Dark"} Mode
-            </button>
-            <div className="h-px bg-gray-100 dark:bg-neutral-900 my-1"></div>
-            <button onClick={handleLogout} className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-bold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors">
-              <LogOut size={16} /> Secure Logout
-            </button>
-          </div>
-        )}
+
+        <div className={`absolute bottom-[110%] left-4 right-4 bg-white dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-2xl shadow-xl p-2 mb-2 transition-all duration-200 z-[9999] origin-bottom ${profileMenuOpen ? 'opacity-100 pointer-events-auto scale-100 translate-y-0' : 'opacity-0 pointer-events-none scale-95 translate-y-2'}`}>
+          <button onClick={() => { toggleTheme(); setProfileMenuOpen(false); }} className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-bold text-gray-700 dark:text-neutral-300 hover:bg-gray-50 dark:hover:bg-neutral-900 transition-colors">
+            {dark ? <Sun size={16} /> : <Moon size={16} />} Switch to {dark ? "Light" : "Dark"} Mode
+          </button>
+          <div className="h-px bg-gray-100 dark:bg-neutral-900 my-1"></div>
+          <button onClick={handleLogout} className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-bold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors">
+            <LogOut size={16} /> Secure Logout
+          </button>
+        </div>
       </div>
     </>
   );
 
   return (
-    /*
-     * THE ROOT FIX IS HERE:
-     * overflow-x-hidden on the outermost wrapper.
-     * This is the single source of truth — no child element,
-     * no matter how wide its internal min-width, can push
-     * the page body wider than the viewport.
-     */
     <div className="min-h-screen bg-gray-50 dark:bg-[#050505] selection:bg-emerald-500 selection:text-white flex overflow-x-hidden">
 
       {/* ── Mobile Top Header ── */}
-      <div className="md:hidden fixed top-0 left-0 right-0 z-40 bg-white/80 dark:bg-black/80 backdrop-blur-xl border-b border-gray-200 dark:border-neutral-800 h-16 flex items-center justify-between shadow-sm px-4">
-        <div className="absolute top-0 left-0 h-16 w-48 bg-white shadow-[2px_0_10px_rgba(0,0,0,0.1)] z-10 flex flex-col justify-center px-4" style={{ clipPath: 'polygon(0 0, 100% 0, 85% 100%, 0 100%)' }}>
-          <img src="/logo.png" alt="Caketown" className="h-6 w-auto object-contain object-left" onError={(e) => { e.target.style.display = 'none'; }} />
+      <div className="md:hidden fixed top-0 left-0 right-0 z-40 bg-white/80 dark:bg-black/80 backdrop-blur-xl border-b border-gray-200 dark:border-neutral-800 h-16 flex items-center justify-between shadow-sm pl-[140px] pr-4">
+        <div className="absolute top-0 left-0 h-16 w-[130px] bg-white shadow-[2px_0_10px_rgba(0,0,0,0.1)] z-10 flex flex-col justify-center px-4" style={{ clipPath: 'polygon(0 0, 100% 0, 85% 100%, 0 100%)' }}>
+          <img src="/logo.png" alt="Caketown" className="h-5 w-auto object-contain object-left" onError={(e) => { e.target.style.display = 'none'; }} />
           <span className="text-[8px] text-emerald-600 font-black uppercase tracking-widest mt-0.5">Admin</span>
         </div>
-        <div className="flex-1"></div>
-        <Link href="/admin/profile" className="z-20 w-8 h-8 rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 flex items-center justify-center font-black text-xs border border-emerald-200 dark:border-emerald-800 shadow-sm">
+        
+        <div className="flex-1 flex justify-end mr-3">
+          <div className="relative w-full max-w-[140px]">
+            {branchesLoading ? (
+              <div className="h-8 flex items-center justify-center text-[10px] text-emerald-600 font-bold animate-pulse bg-emerald-50 dark:bg-emerald-900/20 rounded-lg">Loading...</div>
+            ) : branches.length === 0 ? (
+              <div className="h-8 flex items-center justify-center text-[10px] text-red-500 font-bold bg-white dark:bg-black rounded-lg border border-red-100 dark:border-red-900/50">No Branches</div>
+            ) : (
+              <select value={activeBranchId} onChange={handleBranchChange} className="w-full bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-100 dark:border-emerald-900/50 text-[11px] font-black text-emerald-700 dark:text-emerald-400 pl-2 pr-6 py-1.5 rounded-lg outline-none appearance-none truncate shadow-sm">
+                {branches.map(b => <option key={b.id} value={b.id}>{b.branch_name}</option>)}
+              </select>
+            )}
+            {!branchesLoading && branches.length > 0 && <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-emerald-600 dark:text-emerald-500 pointer-events-none" />}
+          </div>
+        </div>
+
+        <div className="z-20 w-8 h-8 rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 flex items-center justify-center font-black text-xs border border-emerald-200 dark:border-emerald-800 shadow-sm shrink-0">
           {initials}
-        </Link>
+        </div>
       </div>
 
       {/* ── Mobile Slide-out Drawer ── */}
@@ -308,24 +325,20 @@ function AdminLayoutContent({ children }) {
         <div className="md:hidden fixed inset-0 z-[100] flex">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setMobileMenuOpen(false)}></div>
           <div className="relative w-4/5 max-w-sm bg-white dark:bg-black h-full flex flex-col shadow-2xl animate-in slide-in-from-left duration-300">
-            <button onClick={() => setMobileMenuOpen(false)} className="absolute top-4 right-4 p-2 bg-gray-100 dark:bg-neutral-900 rounded-full z-50 text-gray-600 dark:text-neutral-400"><X size={20} /></button>
-            {sidebarContentUI}
+            <button onClick={() => setMobileMenuOpen(false)} className="absolute top-4 right-4 p-2 bg-gray-100 dark:bg-neutral-900 rounded-full z-[150] text-gray-600 dark:text-neutral-400"><X size={20} /></button>
+            {renderSidebarContent(mobileProfileRef)}
           </div>
         </div>
       )}
 
       {/* ── Desktop Sidebar ── */}
       <aside className="hidden md:flex fixed top-0 left-0 h-full w-72 bg-white dark:bg-[#050505] border-r border-gray-200 dark:border-neutral-800 flex-col z-30 shadow-[4px_0_24px_rgba(0,0,0,0.02)]">
-        {sidebarContentUI}
+        {renderSidebarContent(desktopProfileRef)}
       </aside>
 
-      {/* ── Main Content Area ──
-          overflow-x-hidden here is the second defensive layer.
-          It ensures the content column itself never contributes
-          to horizontal scroll even if a grandchild misbehaves.
-      ── */}
+      {/* ── Main Content Area ── */}
       <main className="flex-1 md:ml-72 pt-16 md:pt-0 min-h-screen relative z-0 pb-28 md:pb-0 overflow-x-hidden w-0 md:w-auto min-w-0">
-        <div className="p-4 md:p-8 max-w-[1600px] mx-auto">
+        <div className="p-4 md:p-8 max-w-[1600px] mx-auto animate-in fade-in duration-300">
           {children}
         </div>
       </main>
@@ -340,6 +353,7 @@ function AdminLayoutContent({ children }) {
               <Link
                 key={item.name}
                 href={item.path}
+                scroll={false}
                 className="relative flex-1 flex flex-col items-center justify-center p-2 rounded-2xl group transition-all"
               >
                 {active && (

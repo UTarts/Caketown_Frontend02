@@ -7,7 +7,7 @@ import {
   LayoutDashboard, Users, LogOut, Banknote, Sun, Moon,
   Activity, CalendarDays, History, Menu, X, UserCircle2, Shield, ScanFace, MonitorPlay, MapPin, Wallet
 } from "lucide-react";
-import { logout } from "@/lib/apiClient";
+import { logout, callApi } from "@/lib/apiClient";
 import { canRead } from "@/lib/permissions";
 
 export default function ManagerLayout({ children }) {
@@ -19,8 +19,10 @@ export default function ManagerLayout({ children }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
 
-  const profileMenuRef = useRef(null);
+  const desktopProfileRef = useRef(null);
+  const mobileProfileRef = useRef(null);
 
+  // ─── INITIALIZATION & CLICK-OUTSIDE LISTENER ───
   useEffect(() => {
     const saved = localStorage.getItem("theme");
     const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
@@ -29,34 +31,75 @@ export default function ManagerLayout({ children }) {
     document.documentElement.classList.toggle("dark", isDark);
 
     const handleClickOutside = (event) => {
-      if (profileMenuRef.current && !profileMenuRef.current.contains(event.target)) {
+      const inDesktop = desktopProfileRef.current && desktopProfileRef.current.contains(event.target);
+      const inMobile = mobileProfileRef.current && mobileProfileRef.current.contains(event.target);
+
+      if (!inDesktop && !inMobile) {
         setProfileMenuOpen(false);
       }
     };
+    
     document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+    document.addEventListener("touchstart", handleClickOutside, { passive: true });
+    
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("touchstart", handleClickOutside);
+    };
   }, []);
 
+  // ─── REAL-TIME SESSION & PERMISSION SYNC ENGINE ───
   useEffect(() => {
-    const session = localStorage.getItem("caketown_session");
-    if (!session) { router.push("/"); return; }
+    const syncSession = async () => {
+      const raw = localStorage.getItem("caketown_session");
+      if (!raw) {
+        router.push("/");
+        return;
+      }
 
-    try {
-      const parsed = JSON.parse(session);
-      if (parsed.role !== "manager") { router.push("/"); return; }
-      setUser(parsed);
-    } catch (e) {
-      router.push("/");
-    }
+      try {
+        const parsedSession = JSON.parse(raw);
+        if (parsedSession.role !== "manager") {
+          router.push("/");
+          return;
+        }
+
+        setUser(prev => prev || parsedSession);
+
+        const res = await callApi("get_my_profile", { user_id: parsedSession.id });
+        if (res.status === "success") {
+          const updatedSession = { 
+            ...parsedSession, 
+            feature_permissions: res.data.feature_permissions 
+          };
+          
+          if (JSON.stringify(parsedSession.feature_permissions) !== JSON.stringify(updatedSession.feature_permissions)) {
+            localStorage.setItem("caketown_session", JSON.stringify(updatedSession));
+            setUser(updatedSession);
+          }
+        }
+      } catch (e) {
+        router.push("/");
+      }
+    };
+
+    syncSession();
+    window.addEventListener("focus", syncSession);
+    const interval = setInterval(syncSession, 15000);
+
+    return () => {
+      window.removeEventListener("focus", syncSession);
+      clearInterval(interval);
+    };
   }, [router]);
 
-  // ─── Close mobile menu & profile menu on route change ───
+  // ─── ROUTE CHANGE CLEANUP ───
   useEffect(() => {
     setMobileMenuOpen(false);
     setProfileMenuOpen(false);
   }, [pathname]);
 
-  // ─── Lock body scroll when mobile drawer is open ───
+  // ─── SCROLL LOCK FOR MOBILE DRAWER ───
   useEffect(() => {
     document.body.style.overflow = mobileMenuOpen ? "hidden" : "";
     return () => { document.body.style.overflow = ""; };
@@ -75,7 +118,7 @@ export default function ManagerLayout({ children }) {
 
   const initials = user.name.split(" ").map(n => n[0]).join("").substring(0, 2).toUpperCase();
 
-  // ─── NORMALIZE PERMISSIONS (handles any key the session stores them under) ───
+  // ─── NORMALIZE PERMISSIONS ───
   const featurePermissions =
     user.feature_permissions ||
     user.featurepermissions ||
@@ -104,9 +147,9 @@ export default function ManagerLayout({ children }) {
     return pathname.startsWith(baseNavPath);
   };
 
-  const SidebarContent = () => (
+  // ─── SIDEBAR COMPONENT (Accepts Dynamic Ref) ───
+  const SidebarContent = ({ menuRef }) => (
     <>
-      {/* Premium Diagonal Logo Container */}
       <div className="h-24 w-full bg-white shadow-[0_2px_15px_rgba(0,0,0,0.03)] shrink-0 flex flex-col justify-center px-6 relative z-10" style={{ clipPath: 'polygon(0 0, 100% 0, 100% 85%, 0 100%)' }}>
         <img src="/logo.png" alt="Caketown" className="h-10 w-auto object-contain object-center" onError={(e) => { e.target.style.display='none'; }}/>
       </div>
@@ -129,8 +172,9 @@ export default function ManagerLayout({ children }) {
         </div>
       </nav>
 
-      <div className="p-4 border-t border-gray-100 dark:border-neutral-800 shrink-0 bg-white dark:bg-black z-10 flex items-center justify-between relative" ref={profileMenuRef}>
-        <button onClick={() => setProfileMenuOpen(!profileMenuOpen)} className="flex items-center gap-3 hover:bg-gray-50 dark:hover:bg-neutral-900 p-1.5 rounded-xl transition-colors text-left min-w-0 flex-1">
+      {/* Target Ref Attached Here */}
+      <div className="p-4 border-t border-gray-100 dark:border-neutral-800 shrink-0 bg-white dark:bg-black z-10 flex items-center justify-between relative" ref={menuRef}>
+        <button onClick={() => setProfileMenuOpen(!profileMenuOpen)} className="flex items-center gap-3 hover:bg-gray-50 dark:hover:bg-neutral-900 p-1.5 rounded-xl transition-colors text-left min-w-0 flex-1 outline-none">
           <div className="w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400 flex items-center justify-center font-black text-sm border border-blue-200 dark:border-blue-800 shrink-0">
             {initials}
           </div>
@@ -148,20 +192,18 @@ export default function ManagerLayout({ children }) {
           </a>
         </div>
 
-        {profileMenuOpen && (
-          <div className="absolute bottom-[110%] left-4 right-4 bg-white dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-2xl shadow-xl p-2 mb-2 animate-in slide-in-from-bottom-2 duration-200 z-50">
-            <Link href="/manager/profile" onClick={() => setProfileMenuOpen(false)} className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-bold text-gray-700 dark:text-neutral-300 hover:bg-gray-50 dark:hover:bg-neutral-900 transition-colors">
-              <UserCircle2 size={16} /> My Personal Profile
-            </Link>
-            <button onClick={toggleTheme} className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-bold text-gray-700 dark:text-neutral-300 hover:bg-gray-50 dark:hover:bg-neutral-900 transition-colors">
-              {dark ? <Sun size={16} /> : <Moon size={16} />} Switch to {dark ? "Light" : "Dark"} Mode
-            </button>
-            <div className="h-px bg-gray-100 dark:bg-neutral-900 my-1"></div>
-            <button onClick={handleLogout} className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-bold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors">
-              <LogOut size={16} /> Secure Logout
-            </button>
-          </div>
-        )}
+        <div className={`absolute bottom-[110%] left-4 right-4 bg-white dark:bg-neutral-950 border border-gray-200 dark:border-neutral-800 rounded-2xl shadow-xl p-2 mb-2 transition-all duration-200 z-[9999] origin-bottom ${profileMenuOpen ? 'opacity-100 pointer-events-auto scale-100 translate-y-0' : 'opacity-0 pointer-events-none scale-95 translate-y-2'}`}>
+          <Link href="/manager/profile" onClick={() => { setProfileMenuOpen(false); setMobileMenuOpen(false); }} className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-bold text-gray-700 dark:text-neutral-300 hover:bg-gray-50 dark:hover:bg-neutral-900 transition-colors">
+            <UserCircle2 size={16} /> My Personal Profile
+          </Link>
+          <button onClick={() => { toggleTheme(); setProfileMenuOpen(false); }} className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-bold text-gray-700 dark:text-neutral-300 hover:bg-gray-50 dark:hover:bg-neutral-900 transition-colors">
+            {dark ? <Sun size={16} /> : <Moon size={16} />} Switch to {dark ? "Light" : "Dark"} Mode
+          </button>
+          <div className="h-px bg-gray-100 dark:bg-neutral-900 my-1"></div>
+          <button onClick={handleLogout} className="w-full flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-bold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors">
+            <LogOut size={16} /> Secure Logout
+          </button>
+        </div>
       </div>
     </>
   );
@@ -187,15 +229,15 @@ export default function ManagerLayout({ children }) {
         <div className="md:hidden fixed inset-0 z-[100] flex">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setMobileMenuOpen(false)}></div>
           <div className="relative w-4/5 max-w-sm bg-white dark:bg-black h-full flex flex-col shadow-2xl animate-in slide-in-from-left duration-300">
-            <button onClick={() => setMobileMenuOpen(false)} className="absolute top-4 right-4 p-2 bg-gray-100 dark:bg-neutral-900 rounded-full z-50 text-gray-600 dark:text-neutral-400"><X size={20}/></button>
-            <SidebarContent />
+            <button onClick={() => setMobileMenuOpen(false)} className="absolute top-4 right-4 p-2 bg-gray-100 dark:bg-neutral-900 rounded-full z-[150] text-gray-600 dark:text-neutral-400"><X size={20}/></button>
+            <SidebarContent menuRef={mobileProfileRef} />
           </div>
         </div>
       )}
 
       {/* ── Desktop Sidebar ────────────────────────────────────────── */}
       <aside className="hidden md:flex fixed top-0 left-0 h-full w-72 bg-white dark:bg-[#050505] border-r border-gray-200 dark:border-neutral-800 flex-col z-30 shadow-[4px_0_24px_rgba(0,0,0,0.02)]">
-        <SidebarContent />
+        <SidebarContent menuRef={desktopProfileRef} />
       </aside>
 
       {/* ── Main content ───────────────────────────────────── */}
@@ -209,7 +251,6 @@ export default function ManagerLayout({ children }) {
       <div className="md:hidden fixed bottom-4 left-4 right-4 z-50 animate-in slide-in-from-bottom-6 duration-500 pb-safe">
         <div className="bg-white/85 dark:bg-[#0a0a0a]/85 backdrop-blur-2xl border border-gray-200/60 dark:border-neutral-800/60 shadow-[0_8px_30px_rgb(0,0,0,0.12)] rounded-3xl p-2 flex items-center justify-between">
 
-          {/* Render top 4 authorized items */}
           {authorizedNavItems.slice(0, 4).map((item) => {
             const active = isActive(item.path, item.exact);
             const Icon = item.icon;
@@ -230,18 +271,16 @@ export default function ManagerLayout({ children }) {
             );
           })}
 
-          {/* "More" trigger if more than 4 items */}
-          {authorizedNavItems.length > 4 && (
-            <button
-              onClick={() => setMobileMenuOpen(true)}
-              className="relative flex-1 flex flex-col items-center justify-center p-2 rounded-2xl transition-all"
-            >
-              <Menu size={20} className="mb-1 text-gray-500 dark:text-neutral-400" strokeWidth={2} />
-              <span className="text-[9px] font-black tracking-wide text-gray-500 dark:text-neutral-500">
-                More
-              </span>
-            </button>
-          )}
+          {/* FIXED: The 'More' button is now always rendered */}
+          <button
+            onClick={() => setMobileMenuOpen(true)}
+            className="relative flex-1 flex flex-col items-center justify-center p-2 rounded-2xl transition-all"
+          >
+            <Menu size={20} className="mb-1 text-gray-500 dark:text-neutral-400" strokeWidth={2} />
+            <span className="text-[9px] font-black tracking-wide text-gray-500 dark:text-neutral-500">
+              More
+            </span>
+          </button>
 
         </div>
       </div>

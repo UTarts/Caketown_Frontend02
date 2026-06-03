@@ -128,7 +128,7 @@ export default function BiometricTerminal() {
         });
 
         flat.sort((a, b) => new Date(b.rawTime) - new Date(a.rawTime));
-        setRecentPunches(flat.slice(0, 10)); 
+        setRecentPunches(flat); 
       }
     } catch (error) {
       console.error("Feed sync error:", error);

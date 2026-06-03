@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, Suspense, useRef } from "react";
+import { useSearchParams } from "next/navigation";
 import { callApi } from "@/lib/apiClient";
 import Link from "next/link";
 import {
   Building2, Users, Banknote, Clock, RefreshCw, UserCheck, MapPin, 
   Wallet, Shield, FileText, X, History, ChevronLeft, ChevronRight, Activity, 
-  LogIn, Loader2, Plus, Search, ChevronDown, UserCircle, Unlock, CheckCircle2, Trash2, ArrowDownRight, AlertTriangle
+  LogIn, Loader2, Plus, Search, ChevronDown, UserCircle, Unlock, CheckCircle2, Trash2, ArrowDownRight, AlertTriangle, Globe
 } from "lucide-react";
 
 const formatCurrency = (val) => `₹${parseFloat(val || 0).toLocaleString("en-IN")}`;
@@ -81,8 +82,27 @@ function calcPaidLeaves(daysPresent, cap) {
   return 0;
 }
 
-// ─── MAIN DASHBOARD ────────────────────────────────────────────────────────
-export default function AdminDashboard() {
+// ─── MAIN DASHBOARD COMPONENT ──────────────────────────────────────────────
+function DashboardContent() {
+  const searchParams = useSearchParams();
+  const urlBranchId = searchParams.get('branch_id');
+  
+  // ─── NEW: INDEPENDENT DASHBOARD TOGGLE LOGIC ───
+  const [globalMode, setGlobalMode] = useState(true);
+  const prevBranchRef = useRef(urlBranchId);
+
+  useEffect(() => {
+    // If the URL branch changes (the user selected a new branch from the layout header),
+    // we automatically turn OFF the Global toggle and show them their newly selected branch.
+    if (urlBranchId && prevBranchRef.current && urlBranchId !== prevBranchRef.current) {
+      setGlobalMode(false);
+    }
+    prevBranchRef.current = urlBranchId;
+  }, [urlBranchId]);
+
+  // The final filter that feeds all the data logic below
+  const dashboardBranchFilter = globalMode ? "all" : urlBranchId;
+
   const [session, setSession] = useState(null); 
   const [stats, setStats] = useState(null);
   const [liveData, setLiveData] = useState({}); 
@@ -118,6 +138,15 @@ export default function AdminDashboard() {
     const t = setInterval(() => setNow(new Date()), 60000);
     return () => clearInterval(t);
   }, []);
+
+  // ─── AUTO-SYNC LOG FILTER WITH DASHBOARD FILTER ───
+  useEffect(() => {
+    if (dashboardBranchFilter !== "all") {
+      setLogBranchFilter(dashboardBranchFilter);
+    } else {
+      setLogBranchFilter("all");
+    }
+  }, [dashboardBranchFilter]);
 
   const fetchDashboardAndLive = useCallback(async () => {
     setLoading(true);
@@ -179,15 +208,28 @@ export default function AdminDashboard() {
 
   const clearDate = () => setFilterDate("");
 
-  const totalEmployees = useMemo(() => {
-    if (stats?.total_employees > 0) return stats.total_employees;
-    return stats?.branch_grid?.reduce((acc, b) => acc + (Number(b.staff_count) || 0), 0) || 0;
-  }, [stats]);
+  // ─── INSTANT DASHBOARD FILTERING LOGIC ───
+  const filteredBranchGrid = useMemo(() => {
+    if (!stats?.branch_grid) return [];
+    if (dashboardBranchFilter === "all") return stats.branch_grid;
+    return stats.branch_grid.filter(b => String(b.id) === String(dashboardBranchFilter));
+  }, [stats, dashboardBranchFilter]);
 
-  const presentToday = useMemo(() => {
-    if (stats?.present_today > 0) return stats.present_today;
-    return stats?.branch_grid?.reduce((acc, b) => acc + (Number(b.present_today) || 0), 0) || 0;
-  }, [stats]);
+  const filteredTotalEmployees = useMemo(() => {
+    if (!stats) return 0;
+    if (dashboardBranchFilter === "all") {
+       return stats.total_employees > 0 ? stats.total_employees : (stats.branch_grid?.reduce((acc, b) => acc + (Number(b.staff_count) || 0), 0) || 0);
+    }
+    return filteredBranchGrid.reduce((acc, b) => acc + (Number(b.staff_count) || 0), 0);
+  }, [stats, filteredBranchGrid, dashboardBranchFilter]);
+
+  const filteredPresentToday = useMemo(() => {
+    if (!stats) return 0;
+    if (dashboardBranchFilter === "all") {
+       return stats.present_today > 0 ? stats.present_today : (stats.branch_grid?.reduce((acc, b) => acc + (Number(b.present_today) || 0), 0) || 0);
+    }
+    return filteredBranchGrid.reduce((acc, b) => acc + (Number(b.present_today) || 0), 0);
+  }, [stats, filteredBranchGrid, dashboardBranchFilter]);
 
   const groupedFilteredLogs = useMemo(() => {
     const filtered = logs.filter(log => {
@@ -253,16 +295,20 @@ export default function AdminDashboard() {
     return groupLogsByDate(scrubbedLogs);
   }, [logs, filterDate, branches, users, logBranchFilter, logCategoryFilter]);
 
-  // ─── FINANCE MODAL LOGIC ───
   const globalFilteredUsers = useMemo(() => {
-    if (!globalSearchQuery) return users;
+    let filtered = users;
+    if (dashboardBranchFilter !== "all") {
+      filtered = filtered.filter(u => String(u.branch_id) === String(dashboardBranchFilter));
+    }
+    
+    if (!globalSearchQuery) return filtered;
     const q = globalSearchQuery.toLowerCase();
-    return users.filter(u => 
+    return filtered.filter(u => 
       u.name?.toLowerCase().includes(q) || 
       u.department?.toLowerCase().includes(q) ||
       branches.find(b => b.id === u.branch_id)?.branch_name?.toLowerCase().includes(q)
     );
-  }, [users, globalSearchQuery, branches]);
+  }, [users, globalSearchQuery, branches, dashboardBranchFilter]);
 
   const openUserFinanceModal = async (u) => {
      setSearchModalOpen(false);
@@ -359,13 +405,15 @@ export default function AdminDashboard() {
         <div className="absolute top-0 right-0 w-64 h-64 bg-emerald-500/10 rounded-full blur-3xl -mr-20 -mt-20 pointer-events-none"></div>
         <div className="absolute bottom-0 left-0 w-64 h-64 bg-blue-500/10 rounded-full blur-3xl -ml-20 -mb-20 pointer-events-none"></div>
 
-        <div className="relative z-10">
+        <div className="relative z-10 flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-2">
             <span className="relative flex h-2.5 w-2.5">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
               <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
             </span>
-            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-600 dark:text-emerald-500">Global System Online</span>
+            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-600 dark:text-emerald-500">
+              {globalMode ? "Global System Online" : "Targeted Branch View"}
+            </span>
           </div>
           <h1 className="text-2xl sm:text-3xl md:text-5xl font-black text-gray-900 dark:text-white tracking-tight leading-tight">
             System Overview.
@@ -376,14 +424,29 @@ export default function AdminDashboard() {
           </p>
         </div>
 
-        <button
-          onClick={() => { fetchDashboardAndLive(); fetchFeed(); }}
-          disabled={loading || logsLoading}
-          className="relative z-10 flex items-center justify-center gap-2 px-5 py-3 rounded-2xl bg-gray-900 dark:bg-white text-white dark:text-black font-black text-sm hover:bg-gray-800 dark:hover:bg-gray-200 transition-all shadow-xl shadow-gray-900/20 dark:shadow-white/10 active:scale-95 disabled:opacity-50 w-full md:w-auto min-h-[48px]"
-        >
-          <RefreshCw size={16} strokeWidth={3} className={loading || logsLoading ? "animate-spin" : ""} />
-          {loading || logsLoading ? "Synchronizing..." : "Sync Network"}
-        </button>
+        {/* ── FIXED: INDEPENDENT TOGGLE CONTROLS ── */}
+        <div className="relative z-10 flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto mt-2 md:mt-0">
+          <button
+            onClick={() => setGlobalMode(!globalMode)}
+            className={`flex items-center justify-center gap-2 px-5 py-3.5 rounded-2xl font-black text-sm transition-all shadow-sm active:scale-95 min-h-[48px] w-full sm:w-auto ${
+              globalMode 
+                ? "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800"
+                : "bg-white dark:bg-[#111] text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-neutral-800 hover:bg-gray-50 dark:hover:bg-neutral-900"
+            }`}
+          >
+            {globalMode ? <Globe size={16} /> : <Building2 size={16} />}
+            {globalMode ? "Global View Active" : "Target Branch View"}
+          </button>
+
+          <button
+            onClick={() => { fetchDashboardAndLive(); fetchFeed(); }}
+            disabled={loading || logsLoading}
+            className="flex items-center justify-center gap-2 px-5 py-3.5 rounded-2xl bg-gray-900 dark:bg-white text-white dark:text-black font-black text-sm hover:bg-gray-800 dark:hover:bg-gray-200 transition-all shadow-xl shadow-gray-900/20 dark:shadow-white/10 active:scale-95 disabled:opacity-50 w-full sm:w-auto min-h-[48px]"
+          >
+            <RefreshCw size={16} strokeWidth={3} className={loading || logsLoading ? "animate-spin" : ""} />
+            {loading || logsLoading ? "Syncing..." : "Sync Network"}
+          </button>
+        </div>
       </div>
 
       {/* ── GLOBAL TELEMETRY ────────────────────── */}
@@ -393,8 +456,10 @@ export default function AdminDashboard() {
           <div className="absolute -right-6 -top-6 opacity-20 transform group-hover:scale-110 transition-transform duration-500"><Users size={120} /></div>
           <div className="relative z-10">
             <p className="text-[10px] font-black uppercase tracking-widest text-blue-100 mb-2">Total Workforce</p>
-            <p className="text-4xl md:text-5xl font-black tabular-nums tracking-tight">{loading ? "—" : totalEmployees}</p>
-            <p className="text-xs font-bold text-blue-100 mt-2 opacity-90">Across {stats?.branch_grid?.length || 0} active branches</p>
+            <p className="text-4xl md:text-5xl font-black tabular-nums tracking-tight">{loading ? "—" : filteredTotalEmployees}</p>
+            <p className="text-xs font-bold text-blue-100 mt-2 opacity-90">
+              {dashboardBranchFilter === "all" ? `Across ${filteredBranchGrid.length} active branches` : 'In targeted branch'}
+            </p>
           </div>
         </div>
 
@@ -403,7 +468,7 @@ export default function AdminDashboard() {
           <div className="relative z-10 flex flex-col h-full justify-between">
             <p className="text-[10px] font-black uppercase tracking-widest text-emerald-100 mb-2">Live Attendance</p>
             <div>
-              <p className="text-4xl md:text-5xl font-black tabular-nums tracking-tight">{loading ? "—" : presentToday}</p>
+              <p className="text-4xl md:text-5xl font-black tabular-nums tracking-tight">{loading ? "—" : filteredPresentToday}</p>
               <p className="text-xs font-bold text-emerald-100 mt-2 opacity-90">Present on floor today</p>
             </div>
           </div>
@@ -421,7 +486,7 @@ export default function AdminDashboard() {
                 <span className="text-[10px] font-black uppercase tracking-widest leading-tight">Log Advance</span>
               </button>
               <Link
-                href="/admin/personnel"
+                href={`/admin/personnel${dashboardBranchFilter !== "all" ? `?branch_id=${dashboardBranchFilter}` : ""}`}
                 className="flex flex-col items-center justify-center p-3 bg-blue-50 dark:bg-blue-500/10 hover:bg-blue-100 dark:hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 rounded-2xl transition-colors text-center active:scale-95 min-h-[72px]"
               >
                 <Users size={20} className="mb-1.5" strokeWidth={2.5}/>
@@ -446,10 +511,10 @@ export default function AdminDashboard() {
           <div className="flex-1 overflow-y-auto custom-scrollbar min-h-0 space-y-5 pb-4">
             {loading ? (
                <div className="flex justify-center py-16"><Loader2 className="animate-spin text-blue-500" size={32} /></div>
-            ) : stats?.branch_grid?.length === 0 ? (
-               <div className="bg-white dark:bg-[#0a0a0a] border border-dashed border-gray-200 dark:border-neutral-800 rounded-3xl p-10 text-center text-gray-400 font-bold text-sm">No branches configured.</div>
+            ) : filteredBranchGrid.length === 0 ? (
+               <div className="bg-white dark:bg-[#0a0a0a] border border-dashed border-gray-200 dark:border-neutral-800 rounded-3xl p-10 text-center text-gray-400 font-bold text-sm">No branches configured or matching filter.</div>
             ) : (
-              stats?.branch_grid?.map(branch => {
+              filteredBranchGrid.map(branch => {
                 const total = parseInt(branch.staff_count) || 0;
                 const present = parseInt(branch.present_today) || 0;
                 const activePeople = liveData[branch.id]?.filter(p => p.status === 'working' || p.status === 'on_break') || [];
@@ -478,7 +543,6 @@ export default function AdminDashboard() {
                       </div>
                     </div>
 
-                    {/* Horizontal scroll for personnel table on mobile */}
                     <div className="table-mobile-scroll">
                       {activePeople.length === 0 ? (
                         <div className="p-8 md:p-10 flex flex-col items-center justify-center text-center opacity-50">
@@ -567,7 +631,6 @@ export default function AdminDashboard() {
             
             <div className="p-3 border-b border-gray-100 dark:border-neutral-900 bg-gray-50/50 dark:bg-neutral-900/20 flex flex-col gap-2 shrink-0">
               
-              {/* Category + Branch filters */}
               <div className="flex items-center gap-2 w-full">
                 <select
                   value={logCategoryFilter}
@@ -589,7 +652,6 @@ export default function AdminDashboard() {
                 </select>
               </div>
               
-              {/* Date Pagination */}
               <div className="flex items-center gap-1 bg-white dark:bg-[#111] border border-gray-200 dark:border-neutral-800 rounded-xl p-1 shadow-sm w-full">
                 <button onClick={handlePrevDay} className="p-2 hover:bg-gray-100 dark:hover:bg-neutral-800 rounded-lg transition-colors text-gray-500 min-w-[36px] min-h-[36px] flex items-center justify-center"><ChevronLeft size={16}/></button>
                 <div className="flex-1 flex justify-center">
@@ -902,5 +964,13 @@ export default function AdminDashboard() {
       )}
 
     </div>
+  );
+}
+
+export default function DashboardWrapper() {
+  return (
+    <Suspense fallback={<div className="flex justify-center py-20"><Loader2 className="animate-spin text-emerald-500" size={32} /></div>}>
+      <DashboardContent />
+    </Suspense>
   );
 }

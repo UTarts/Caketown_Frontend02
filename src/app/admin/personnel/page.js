@@ -350,7 +350,7 @@ export default function PersonnelCommandPage() {
     setSaving(true);
     const payload = {
       ...formData,
-      adminid: session.id,
+      admin_id: session.id,
       permissions: normalizePermissionShape(formData.permissions),
     };
     const res = await callApi("create_user", payload);
@@ -399,8 +399,8 @@ export default function PersonnelCommandPage() {
     setSaving(true);
     const payload = {
       ...formData,
-      userid: formData.id,
-      adminid: session.id,
+      user_id: formData.id,  
+      admin_id: session.id,   
       permissions: normalizePermissionShape(formData.permissions),
     };
     const res = await callApi("update_user", payload);
