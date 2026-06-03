@@ -4,9 +4,9 @@ import { useEffect, useState, useCallback, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import { callApi } from "@/lib/apiClient";
 import {
-  Activity, Search, Loader2, Clock, CalendarDays, 
-  ChevronLeft, ChevronRight, CheckCircle2, Coffee, 
-  LogOut, LogIn, ArrowRight, X, AlertCircle, Shield, 
+  Activity, Search, Loader2, Clock, CalendarDays,
+  ChevronLeft, ChevronRight, CheckCircle2, Coffee,
+  LogOut, LogIn, ArrowRight, X, AlertCircle, Shield,
   Briefcase, Edit2, Check, ChevronDown, History, Users
 } from "lucide-react";
 
@@ -33,6 +33,21 @@ const isStrictlySameDate = (isoString, viewDate) => {
   return isoString.startsWith(viewDate);
 };
 
+const getTargetHours = (person) => {
+  const value = Number(person?.target_hours ?? person?.standard_shift_hours ?? 10);
+  return Number.isFinite(value) && value > 0 ? value : 10;
+};
+
+const getPersonnelMeta = (person) => {
+  const designation = person?.designation?.trim?.() || "";
+  const department = person?.department?.trim?.() || "";
+
+  if (designation && department) return `${designation} • ${department}`;
+  if (designation) return designation;
+  if (department) return department;
+  return person?.role || "Standard";
+};
+
 export default function LiveFloorPage() {
   const searchParams = useSearchParams();
   const branch_id = searchParams.get("branch_id");
@@ -43,7 +58,7 @@ export default function LiveFloorPage() {
   const [viewDate, setViewDate] = useState(getLocalDate());
   const [now, setNow] = useState(Date.now());
   const [searchQuery, setSearchQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all"); 
+  const [statusFilter, setStatusFilter] = useState("all");
 
   // Slide-out Inspector State
   const [inspectedUser, setInspectedUser] = useState(null);
@@ -52,8 +67,8 @@ export default function LiveFloorPage() {
   const [inspectorLoading, setInspectorLoading] = useState(false);
 
   // Override State
-  const [overrideTarget, setOverrideTarget] = useState(null); 
-  const [overrideForm, setOverrideForm] = useState({ status: "F", reason: "" }); 
+  const [overrideTarget, setOverrideTarget] = useState(null);
+  const [overrideForm, setOverrideForm] = useState({ status: "F", reason: "" });
   const [overrideSubmitting, setOverrideSubmitting] = useState(false);
 
   // Global Clock Tick
@@ -99,7 +114,7 @@ export default function LiveFloorPage() {
     const d = new Date(viewDate); d.setDate(d.getDate() - 1);
     setViewDate(d.toISOString().split('T')[0]);
   };
-  
+
   const handleNextDay = () => {
     if (viewDate === getLocalDate()) return;
     const d = new Date(viewDate); d.setDate(d.getDate() + 1);
@@ -110,16 +125,16 @@ export default function LiveFloorPage() {
     e.preventDefault();
     setOverrideSubmitting(true);
     const res = await callApi("set_attendance_override", {
-      user_id: overrideTarget.user.id, 
-      date: overrideTarget.date, 
-      status: overrideForm.status, 
-      reason: overrideForm.reason, 
+      user_id: overrideTarget.user.id,
+      date: overrideTarget.date,
+      status: overrideForm.status,
+      reason: overrideForm.reason,
       admin_id: session?.id
     });
     setOverrideSubmitting(false);
-    
-    if (res.status === "success") { 
-      setOverrideTarget(null); 
+
+    if (res.status === "success") {
+      setOverrideTarget(null);
       fetchLiveFloor();
     } else {
       alert(res.message);
@@ -143,9 +158,9 @@ export default function LiveFloorPage() {
         if (validPunches.length > 0) {
           const renderPunches = [...validPunches].map(p => new Date(p).getTime());
           if (isWorking && isToday) renderPunches.push(now);
-          
+
           for (let i = 0; i < renderPunches.length - 1; i++) {
-            const duration = Math.floor((renderPunches[i+1] - renderPunches[i]) / 60000);
+            const duration = Math.floor((renderPunches[i + 1] - renderPunches[i]) / 60000);
             if (i % 2 === 0) workMins += duration;
             else breakMins += duration;
           }
@@ -155,11 +170,11 @@ export default function LiveFloorPage() {
       const strictFirst = validPunches.length > 0 ? validPunches[0] : null;
       const strictLast = validPunches.length > 0 ? validPunches[validPunches.length - 1] : null;
 
-      const targetMins = (person.standard_shift_hours || 10) * 60;
+      const targetMins = getTargetHours(person) * 60;
       const progress = Math.min((workMins / targetMins) * 100, 100);
 
       return {
-        ...person, strictFirst, strictLast, workMins, breakMins, 
+        ...person, strictFirst, strictLast, workMins, breakMins,
         targetMins, progress, validPunches, isToday, isWorking, isOnBreak, isOffDuty
       };
     }).filter(p => {
@@ -179,7 +194,7 @@ export default function LiveFloorPage() {
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500 pb-24 text-gray-900 dark:text-neutral-200">
-      
+
       {/* ── HEADER ──────────────────────────────────────────────────────── */}
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 bg-white/60 dark:bg-neutral-900/40 p-5 md:p-6 rounded-3xl backdrop-blur-xl border border-gray-200/60 dark:border-neutral-800/60 shadow-sm">
         <div>
@@ -195,12 +210,12 @@ export default function LiveFloorPage() {
 
         {/* Date Switcher */}
         <div className="flex items-center bg-white dark:bg-[#111] border border-gray-200 dark:border-neutral-800 rounded-2xl p-1.5 shadow-sm">
-          <button onClick={handlePrevDay} className="p-2 hover:bg-gray-100 dark:hover:bg-neutral-800 rounded-xl transition-colors text-gray-500"><ChevronLeft size={18}/></button>
+          <button onClick={handlePrevDay} className="p-2 hover:bg-gray-100 dark:hover:bg-neutral-800 rounded-xl transition-colors text-gray-500"><ChevronLeft size={18} /></button>
           <div className="flex items-center gap-2 px-4 py-1">
             <CalendarDays size={16} className="text-emerald-500" />
             <input type="date" value={viewDate} max={getLocalDate()} onChange={(e) => setViewDate(e.target.value)} className="bg-transparent text-sm font-black text-gray-900 dark:text-white outline-none cursor-pointer w-32 text-center" />
           </div>
-          <button onClick={handleNextDay} disabled={viewDate === getLocalDate()} className="p-2 hover:bg-gray-100 dark:hover:bg-neutral-800 rounded-xl transition-colors text-gray-500 disabled:opacity-30"><ChevronRight size={18}/></button>
+          <button onClick={handleNextDay} disabled={viewDate === getLocalDate()} className="p-2 hover:bg-gray-100 dark:hover:bg-neutral-800 rounded-xl transition-colors text-gray-500 disabled:opacity-30"><ChevronRight size={18} /></button>
         </div>
       </div>
 
@@ -222,9 +237,9 @@ export default function LiveFloorPage() {
 
         <div className="relative w-full xl:max-w-sm">
           <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
-          <input 
+          <input
             value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search by name or department..." 
+            placeholder="Search by name or department..."
             className="w-full bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-2xl py-3 pl-10 pr-4 text-sm font-bold text-gray-900 dark:text-white outline-none focus:border-emerald-500 transition-all shadow-sm"
           />
         </div>
@@ -236,15 +251,15 @@ export default function LiveFloorPage() {
           <div className="flex items-center justify-center h-64"><Loader2 className="animate-spin text-emerald-500" size={32} /></div>
         ) : processedRoster.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-64 text-center opacity-50">
-             <Users size={40} className="mb-3 text-gray-400" />
-             <p className="text-base font-black text-gray-900 dark:text-white">No personnel match criteria.</p>
+            <Users size={40} className="mb-3 text-gray-400" />
+            <p className="text-base font-black text-gray-900 dark:text-white">No personnel match criteria.</p>
           </div>
         ) : (
           <div className="w-full overflow-x-auto custom-scrollbar pb-32">
             <table className="w-full text-left min-w-[1100px]">
               <thead>
                 <tr className="bg-gray-50/80 dark:bg-black border-b border-gray-100 dark:border-neutral-900 text-[10px] font-black text-gray-400 uppercase tracking-widest">
-                  <th className="p-4 sticky left-0 z-10 bg-gray-50/95 dark:bg-black/95 backdrop-blur-sm shadow-[2px_0_8px_rgba(0,0,0,0.05)] border-r border-gray-100 dark:border-neutral-900">Personnel</th>
+                  <th className="p-4 md:sticky md:left-0 z-10 bg-gray-50/95 dark:bg-black/95 backdrop-blur-sm shadow-[2px_0_8px_rgba(0,0,0,0.05)] border-r border-gray-100 dark:border-neutral-900">Personnel</th>
                   <th className="p-4 text-center">Target Hrs</th>
                   <th className="p-4 text-center">First In</th>
                   <th className="p-4 text-center">Last Out</th>
@@ -255,25 +270,27 @@ export default function LiveFloorPage() {
               </thead>
               <tbody className="divide-y divide-gray-100 dark:divide-neutral-900">
                 {processedRoster.map(person => (
-                  <tr 
-                    key={person.id} 
+                  <tr
+                    key={person.id}
                     onClick={() => { setInspectedUser(person); setInspectorDate(viewDate); }}
                     className="hover:bg-gray-50/80 dark:hover:bg-neutral-900/50 group transition-colors cursor-pointer"
                   >
-                    <td className="p-4 sticky left-0 z-10 bg-white dark:bg-[#0a0a0a] group-hover:bg-gray-50/80 dark:group-hover:bg-[#111] border-r border-gray-100 dark:border-neutral-900 shadow-[2px_0_8px_rgba(0,0,0,0.02)] transition-colors">
+                    <td className="p-4 md:sticky md:left-0 z-10 bg-white dark:bg-[#0a0a0a] group-hover:bg-gray-50/80 dark:group-hover:bg-[#111] border-r border-gray-100 dark:border-neutral-900 shadow-[2px_0_8px_rgba(0,0,0,0.02)] transition-colors">
                       <div className="flex items-center gap-3">
                         <div className="w-9 h-9 rounded-xl bg-gray-100 dark:bg-neutral-800 text-gray-500 flex items-center justify-center text-xs font-black shrink-0">
                           {person.name.charAt(0)}
                         </div>
                         <div>
                           <p className="font-black text-sm text-gray-900 dark:text-white mb-0.5">{person.name}</p>
-                          <p className="text-[9px] font-bold text-gray-500 uppercase tracking-widest flex items-center gap-1"><Briefcase size={10}/> {person.department || "Standard"}</p>
+                          <p className="text-[9px] font-bold text-gray-500 uppercase tracking-widest flex items-center gap-1">
+                            <Briefcase size={10} /> {getPersonnelMeta(person)}
+                          </p>
                         </div>
                       </div>
                     </td>
-                    <td className="p-4 text-center font-mono font-black text-xs text-gray-600 dark:text-neutral-400">{person.standard_shift_hours || 10}h</td>
+                    <td className="p-4 text-center font-mono font-black text-xs text-gray-600 dark:text-neutral-400">{getTargetHours(person)}h</td>
                     <td className="p-4 text-center font-mono text-xs text-gray-700 dark:text-neutral-300">
-                      {person.strictFirst ? <span className="flex items-center justify-center gap-1.5"><LogIn size={12} className="text-gray-400"/> {formatTime(person.strictFirst)}</span> : "—"}
+                      {person.strictFirst ? <span className="flex items-center justify-center gap-1.5"><LogIn size={12} className="text-gray-400" /> {formatTime(person.strictFirst)}</span> : "—"}
                     </td>
                     <td className="p-4 text-center font-mono text-xs text-gray-700 dark:text-neutral-300">
                       {(person.isWorking && person.isToday) ? <span className="text-emerald-500 font-black text-[10px] uppercase tracking-widest animate-pulse">Active</span> : formatTime(person.strictLast)}
@@ -285,7 +302,7 @@ export default function LiveFloorPage() {
                       </div>
                     </td>
                     <td className="p-4 text-right font-mono font-black text-sm text-red-500 dark:text-red-400">{formatDuration(person.breakMins)}</td>
-                    
+
                     <td className="p-4 text-center border-l border-gray-100 dark:border-neutral-900">
                       {person.isToday ? (
                         person.isWorking ? (
@@ -331,9 +348,9 @@ export default function LiveFloorPage() {
       {inspectedUser && (
         <>
           <div className="fixed inset-0 bg-black/40 backdrop-blur-[2px] z-40 transition-opacity" onClick={() => setInspectedUser(null)}></div>
-          
+
           <div className="fixed top-0 right-0 bottom-0 w-full md:w-[450px] bg-white dark:bg-[#050505] shadow-[-10px_0_40px_rgba(0,0,0,0.1)] z-50 flex flex-col animate-in slide-in-from-right duration-300 border-l border-gray-200 dark:border-neutral-800">
-            
+
             <div className="p-5 border-b border-gray-100 dark:border-neutral-900 bg-gray-50/50 dark:bg-[#0a0a0a] shrink-0">
               <div className="flex items-start justify-between mb-4">
                 <div className="flex items-center gap-3">
@@ -342,7 +359,7 @@ export default function LiveFloorPage() {
                   </div>
                   <div>
                     <h2 className="text-lg font-black text-gray-900 dark:text-white leading-tight">{inspectedUser.name}</h2>
-                    <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">{inspectedUser.department || "Standard Role"}</p>
+                    <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">{getPersonnelMeta(inspectedUser)}</p>
                   </div>
                 </div>
                 <button onClick={() => setInspectedUser(null)} className="p-2 bg-gray-200 dark:bg-neutral-800 rounded-full hover:bg-gray-300 dark:hover:bg-neutral-700 transition-colors"><X size={16} className="text-gray-600 dark:text-neutral-300" /></button>
@@ -352,17 +369,17 @@ export default function LiveFloorPage() {
                 <button onClick={() => {
                   const d = new Date(inspectorDate); d.setDate(d.getDate() - 1);
                   setInspectorDate(d.toISOString().split('T')[0]);
-                }} className="p-1.5 hover:bg-gray-100 dark:hover:bg-neutral-800 rounded-lg transition-colors text-gray-500"><ChevronLeft size={16}/></button>
-                
+                }} className="p-1.5 hover:bg-gray-100 dark:hover:bg-neutral-800 rounded-lg transition-colors text-gray-500"><ChevronLeft size={16} /></button>
+
                 <span className="text-xs font-black uppercase tracking-widest text-emerald-600 dark:text-emerald-500 flex items-center gap-1.5">
-                  <CalendarDays size={14}/> {new Date(inspectorDate).toLocaleDateString("en-IN", { month: "short", day: "numeric", year: "numeric" })}
+                  <CalendarDays size={14} /> {new Date(inspectorDate).toLocaleDateString("en-IN", { month: "short", day: "numeric", year: "numeric" })}
                 </span>
-                
+
                 <button onClick={() => {
                   if (inspectorDate === getLocalDate()) return;
                   const d = new Date(inspectorDate); d.setDate(d.getDate() + 1);
                   setInspectorDate(d.toISOString().split('T')[0]);
-                }} disabled={inspectorDate === getLocalDate()} className="p-1.5 hover:bg-gray-100 dark:hover:bg-neutral-800 rounded-lg transition-colors text-gray-500 disabled:opacity-30"><ChevronRight size={16}/></button>
+                }} disabled={inspectorDate === getLocalDate()} className="p-1.5 hover:bg-gray-100 dark:hover:bg-neutral-800 rounded-lg transition-colors text-gray-500 disabled:opacity-30"><ChevronRight size={16} /></button>
               </div>
             </div>
 
@@ -374,12 +391,12 @@ export default function LiveFloorPage() {
                   const isToday = inspectorDate === getLocalDate();
                   const isWorking = isToday && inspectorData?.status === 'working';
                   const isPastDate = inspectorDate < getLocalDate();
-                  
+
                   let workMins = 0;
                   let breakMins = 0;
                   const validPunches = (inspectorData?.punches || []).filter(p => isStrictlySameDate(p, inspectorDate));
                   const timelineEvents = [];
-                  
+
                   if (validPunches.length > 0) {
                     const renderPunches = [...validPunches].map(p => new Date(p).getTime());
                     if (isWorking) renderPunches.push(now);
@@ -392,14 +409,14 @@ export default function LiveFloorPage() {
                       timelineEvents.push({ time: timeStr, type: isPunchIn ? 'IN' : 'OUT', isLive: isLivePlaceholder });
 
                       if (i < renderPunches.length - 1) {
-                        const duration = Math.floor((renderPunches[i+1] - renderPunches[i]) / 60000);
+                        const duration = Math.floor((renderPunches[i + 1] - renderPunches[i]) / 60000);
                         if (isPunchIn) workMins += duration;
                         else breakMins += duration;
                       }
                     }
                   }
 
-                  const targetMins = (inspectorData?.standard_shift_hours || 10) * 60;
+                  const targetMins = getTargetHours(inspectorData) * 60;
                   const remainingMins = Math.max(targetMins - workMins, 0);
                   const progress = Math.min((workMins / targetMins) * 100, 100);
 
@@ -407,21 +424,21 @@ export default function LiveFloorPage() {
                   let calculatedStatus = "Absent (A)";
                   let statusMarker = "A";
                   if (validPunches.length > 0) {
-                      if (workMins >= targetMins - 30) {
-                          calculatedStatus = "Full Day (F)";
-                          statusMarker = "F";
-                      } else if (workMins >= targetMins / 2) {
-                          calculatedStatus = "Half Day (H)";
-                          statusMarker = "H";
-                      } else {
-                          calculatedStatus = "Absent (A)";
-                          statusMarker = "A";
-                      }
+                    if (workMins >= targetMins - 30) {
+                      calculatedStatus = "Full Day (F)";
+                      statusMarker = "F";
+                    } else if (workMins >= targetMins / 2) {
+                      calculatedStatus = "Half Day (H)";
+                      statusMarker = "H";
+                    } else {
+                      calculatedStatus = "Absent (A)";
+                      statusMarker = "A";
+                    }
                   }
 
                   return (
                     <div className="space-y-8 pb-safe">
-                      
+
                       {isPastDate && (
                         <div className="bg-white dark:bg-[#111] border border-gray-200 dark:border-neutral-800 rounded-2xl p-4 flex items-center justify-between shadow-sm">
                           <div>
@@ -435,11 +452,10 @@ export default function LiveFloorPage() {
                             </span>
                           </div>
                           <button onClick={() => {
-                             setOverrideTarget({ user: inspectedUser, date: inspectorDate });
-                             // FIX: Ensure 'F' correctly defaults
-                             setOverrideForm({ status: statusMarker === 'F' ? 'F' : statusMarker, reason: "" });
+                            setOverrideTarget({ user: inspectedUser, date: inspectorDate });
+                            setOverrideForm({ status: statusMarker === 'F' ? 'F' : statusMarker, reason: "" });
                           }} className="flex items-center gap-1.5 px-3 py-2 bg-gray-100 hover:bg-gray-200 dark:bg-neutral-800 dark:hover:bg-neutral-700 text-gray-700 dark:text-neutral-300 text-[10px] font-black uppercase tracking-widest rounded-xl transition-colors">
-                            <Edit2 size={12}/> Override
+                            <Edit2 size={12} /> Override
                           </button>
                         </div>
                       )}
@@ -467,8 +483,8 @@ export default function LiveFloorPage() {
                       </div>
 
                       <div>
-                        <h3 className="text-xs font-black uppercase tracking-widest text-gray-400 mb-6 flex items-center gap-2 border-b border-gray-100 dark:border-neutral-900 pb-2"><History size={14}/> Chronological Log</h3>
-                        
+                        <h3 className="text-xs font-black uppercase tracking-widest text-gray-400 mb-6 flex items-center gap-2 border-b border-gray-100 dark:border-neutral-900 pb-2"><History size={14} /> Chronological Log</h3>
+
                         {timelineEvents.length === 0 ? (
                           <div className="text-center py-10 opacity-50">
                             <Clock size={32} className="mx-auto text-gray-400 mb-3" />
@@ -492,9 +508,9 @@ export default function LiveFloorPage() {
                                   {idx < timelineEvents.length - 1 && (
                                     <div className="py-4 pl-2">
                                       <span className="text-[10px] font-black uppercase tracking-widest text-gray-400 bg-white dark:bg-[#050505] px-2 py-1 rounded-md border border-gray-100 dark:border-neutral-800">
-                                        {isPIn ? "Working: " : "On Break: "} 
+                                        {isPIn ? "Working: " : "On Break: "}
                                         <span className={isPIn ? "text-emerald-500" : "text-red-500"}>
-                                          {formatDuration(Math.floor((new Date(isStrictlySameDate(validPunches[idx+1], inspectorDate) ? validPunches[idx+1] : now).getTime() - new Date(validPunches[idx]).getTime()) / 60000))}
+                                          {formatDuration(Math.floor((new Date(isStrictlySameDate(validPunches[idx + 1], inspectorDate) ? validPunches[idx + 1] : now).getTime() - new Date(validPunches[idx]).getTime()) / 60000))}
                                         </span>
                                       </span>
                                     </div>
@@ -524,24 +540,23 @@ export default function LiveFloorPage() {
               <h2 className="text-base font-black flex items-center gap-2 text-gray-900 dark:text-white"><Edit2 size={18} className="text-emerald-500" /> Override Ledger Status</h2>
               <button onClick={() => setOverrideTarget(null)} className="p-2 bg-gray-100 dark:bg-neutral-900 rounded-full hover:bg-gray-200 transition-colors text-gray-600 dark:text-neutral-400"><X size={16} /></button>
             </div>
-            
+
             <form onSubmit={handleOverrideSubmit} className="p-5 md:p-6 space-y-5 pb-safe">
               <div className="bg-gray-50 dark:bg-neutral-900/50 p-4 rounded-2xl flex items-center justify-between border border-gray-100 dark:border-neutral-800">
-                 <div>
-                   <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Employee</p>
-                   <p className="text-sm font-black text-gray-900 dark:text-white">{overrideTarget.user.name}</p>
-                 </div>
-                 <div className="text-right">
-                   <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Ledger Date</p>
-                   <p className="font-mono font-black text-emerald-600 dark:text-emerald-400">{new Date(overrideTarget.date).toLocaleDateString('en-IN', {day:'numeric', month:'short', year:'numeric'})}</p>
-                 </div>
+                <div>
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Employee</p>
+                  <p className="text-sm font-black text-gray-900 dark:text-white">{overrideTarget.user.name}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Ledger Date</p>
+                  <p className="font-mono font-black text-emerald-600 dark:text-emerald-400">{new Date(overrideTarget.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</p>
+                </div>
               </div>
 
               <div className="space-y-1.5">
                 <label className="text-[10px] font-bold text-gray-500 dark:text-neutral-400 uppercase tracking-widest pl-1">New Ledger Status</label>
                 <div className="relative">
-                  <select value={overrideForm.status} onChange={e => setOverrideForm({...overrideForm, status: e.target.value})} className="w-full bg-gray-50 dark:bg-[#111] border border-gray-200 dark:border-neutral-800 rounded-2xl px-4 py-3.5 text-sm font-bold text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500/50 transition-all appearance-none cursor-pointer">
-                    {/* FIX: Re-verified F payload */}
+                  <select value={overrideForm.status} onChange={e => setOverrideForm({ ...overrideForm, status: e.target.value })} className="w-full bg-gray-50 dark:bg-[#111] border border-gray-200 dark:border-neutral-800 rounded-2xl px-4 py-3.5 text-sm font-bold text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500/50 transition-all appearance-none cursor-pointer">
                     <option value="F">Full Day (F)</option>
                     <option value="H">Half Day (H)</option>
                     <option value="L">On Leave (L)</option>
@@ -553,11 +568,11 @@ export default function LiveFloorPage() {
 
               <div className="space-y-1.5">
                 <label className="text-[10px] font-bold text-gray-500 dark:text-neutral-400 uppercase tracking-widest pl-1">Reason (Required for Audit)</label>
-                <textarea required value={overrideForm.reason} onChange={e => setOverrideForm({...overrideForm, reason: e.target.value})} className="w-full bg-gray-50 dark:bg-[#111] border border-gray-200 dark:border-neutral-800 rounded-2xl px-4 py-3.5 text-sm font-medium text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500/50 transition-all resize-none h-20 custom-scrollbar" placeholder="e.g. System glitch, approved late entry..." />
+                <textarea required value={overrideForm.reason} onChange={e => setOverrideForm({ ...overrideForm, reason: e.target.value })} className="w-full bg-gray-50 dark:bg-[#111] border border-gray-200 dark:border-neutral-800 rounded-2xl px-4 py-3.5 text-sm font-medium text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500/50 transition-all resize-none h-20 custom-scrollbar" placeholder="e.g. System glitch, approved late entry..." />
               </div>
 
               <button type="submit" disabled={overrideSubmitting} className="w-full py-4 bg-emerald-500 hover:bg-emerald-600 text-white text-sm font-black rounded-2xl flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20 active:scale-[0.98] transition-all disabled:opacity-50">
-                {overrideSubmitting ? <Loader2 size={18} className="animate-spin" /> : <Check size={18} strokeWidth={2.5} />} 
+                {overrideSubmitting ? <Loader2 size={18} className="animate-spin" /> : <Check size={18} strokeWidth={2.5} />}
                 Confirm Override
               </button>
             </form>
