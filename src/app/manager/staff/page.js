@@ -13,6 +13,7 @@ import {
   RefreshCcw,
   CheckCircle2,
   AlertCircle,
+  ArrowRight, MoreVertical
 } from "lucide-react";
 
 const DETECTION_INTERVAL_MS = 450;
@@ -32,17 +33,21 @@ function hasRegisteredFace(user) {
   );
 }
 
-function getDepartmentLabel(user) {
-  return user?.department || user?.role || "Standard Staff";
-}
-
 export default function BranchStaffPage() {
   const router = useRouter();
 
   const [staff, setStaff] = useState([]);
+  const [branches, setBranches] = useState([]); // NEW: State for branches
   const [loading, setLoading] = useState(true);
   const [session, setSession] = useState(null);
+  const [actionMenuId, setActionMenuId] = useState(null); 
 
+  // Transfer States
+  const [transferModal, setTransferModal] = useState(null);
+  const [targetBranchId, setTargetBranchId] = useState("");
+  const [transferring, setTransferring] = useState(false);
+
+  // Biometric States
   const [registeringUser, setRegisteringUser] = useState(null);
   const [modelsLoaded, setModelsLoaded] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
@@ -111,19 +116,29 @@ export default function BranchStaffPage() {
     setScanStatus("Starting...");
   };
 
-  const fetchStaff = async (branchId) => {
+  const fetchStaffAndBranches = async (branchId) => {
     if (!branchId) return;
 
     setLoading(true);
     try {
-      const res = await callApi("get_branch_staff", { branch_id: branchId });
+      // NEW: Fetch branches alongside staff so managers can select a destination
+      const [res, branchRes] = await Promise.all([
+        callApi("get_branch_staff", { branch_id: branchId }),
+        callApi("get_branches")
+      ]);
+
       if (res?.status === "success") {
-        setStaff(Array.isArray(res.data) ? res.data : []);
+        const activeStaff = Array.isArray(res.data) ? res.data.filter(u => u.status === 'active') : [];
+        setStaff(activeStaff);
       } else {
         setStaff([]);
       }
+
+      if (branchRes?.status === "success") {
+        setBranches(branchRes.data || []);
+      }
     } catch (error) {
-      console.error("Staff fetch error:", error);
+      console.error("Fetch error:", error);
       setStaff([]);
     } finally {
       if (mountedRef.current) setLoading(false);
@@ -150,7 +165,7 @@ export default function BranchStaffPage() {
       setSession(parsed);
 
       if (parsed?.branch_id) {
-        fetchStaff(parsed.branch_id);
+        fetchStaffAndBranches(parsed.branch_id);
       }
     } catch (error) {
       console.error("Session parse error:", error);
@@ -163,6 +178,30 @@ export default function BranchStaffPage() {
     };
   }, [router]);
 
+  // ─── NEW: TRANSFER HANDLER ───
+  const handleTransfer = async () => {
+    if (!targetBranchId) return alert("Select a target branch.");
+    if (!confirm(`Transfer ${transferModal.name} to the new branch? They will immediately be removed from your roster.`)) return;
+
+    setTransferring(true);
+    const res = await callApi("transfer_employee_branch", {
+      user_id: transferModal.id,
+      new_branch_id: targetBranchId,
+      actor_id: session.id,
+      actor_role: 'manager'
+    });
+    setTransferring(false);
+
+    if (res.status === "success") {
+      setTransferModal(null);
+      setTargetBranchId("");
+      fetchStaffAndBranches(session.branch_id); // Refresh roster
+    } else {
+      alert(res.message || "Failed to transfer employee.");
+    }
+  };
+
+  // BIOMETRIC LOGIC
   const drawFaceGuide = (ctx, box) => {
     const { x, y, width, height } = box;
     const radius = 16;
@@ -362,7 +401,7 @@ export default function BranchStaffPage() {
           latestDescriptorRef.current = null;
           setShowSuccess(false);
           setScanStatus("Starting...");
-          await fetchStaff(session.branch_id);
+          await fetchStaffAndBranches(session.branch_id);
         }, 1000);
       } else {
         setIsSaving(false);
@@ -375,14 +414,11 @@ export default function BranchStaffPage() {
     }
   };
 
-  const canModifyFaces = session
-    ? canWrite(session.feature_permissions, "register_face")
-    : false;
+  // PERMISSION CHECKS
+  const canModifyFaces = session ? canWrite(session.feature_permissions, "register_face") : false;
+  const canTransfer = session ? canWrite(session.feature_permissions, "transfer_employee") : false; // NEW
 
-  const registeredCount = useMemo(
-    () => staff.filter((user) => hasRegisteredFace(user)).length,
-    [staff]
-  );
+  const registeredCount = useMemo(() => staff.filter((user) => hasRegisteredFace(user)).length, [staff]);
 
   if (!session) return null;
 
@@ -401,7 +437,7 @@ export default function BranchStaffPage() {
             </div>
 
             <button
-              onClick={() => fetchStaff(session.branch_id)}
+              onClick={() => fetchStaffAndBranches(session.branch_id)}
               className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl border border-slate-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-4 py-3 text-sm font-semibold text-slate-700 dark:text-neutral-300 transition hover:bg-slate-100 dark:hover:bg-neutral-800 active:scale-[0.99]"
             >
               <RefreshCcw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
@@ -422,6 +458,7 @@ export default function BranchStaffPage() {
             </div>
           ) : (
             <>
+              {/* DESKTOP TABLE VIEW */}
               <div className="hidden overflow-x-auto md:block">
                 <table className="min-w-full">
                   <thead className="bg-slate-50 dark:bg-[#111]">
@@ -430,7 +467,7 @@ export default function BranchStaffPage() {
                         Name
                       </th>
                       <th className="px-6 py-4 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-neutral-400">
-                        Department
+                        Department & Role
                       </th>
                       <th className="px-6 py-4 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-neutral-400">
                         Status
@@ -445,12 +482,17 @@ export default function BranchStaffPage() {
                       const registered = hasRegisteredFace(user);
 
                       return (
-                        <tr key={user.id} className="border-b border-slate-100 dark:border-neutral-800 last:border-b-0">
+                        <tr key={user.id} className="border-b border-slate-100 dark:border-neutral-800 last:border-b-0 hover:bg-slate-50/50 dark:hover:bg-neutral-900/30 transition-colors">
                           <td className="px-6 py-4">
                             <div className="font-semibold text-slate-900 dark:text-white">{user.name}</div>
                           </td>
-                          <td className="px-6 py-4 text-slate-600 dark:text-neutral-400">
-                            {getDepartmentLabel(user)}
+                          <td className="px-6 py-4">
+                            <p className="text-sm font-semibold text-slate-900 dark:text-white">
+                              {user.department || "Unassigned"}
+                            </p>
+                            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-0.5">
+                              {user.designation || user.role || "Staff"}
+                            </p>
                           </td>
                           <td className="px-6 py-4">
                             <span
@@ -463,21 +505,36 @@ export default function BranchStaffPage() {
                               {registered ? "Registered" : "Pending"}
                             </span>
                           </td>
-                          <td className="px-6 py-4 text-right">
-                            {canModifyFaces ? (
-                              <button
-                                onClick={() => openRegistrationModal(user)}
-                                className={`inline-flex min-h-10 items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition active:scale-[0.99] ${
-                                  registered
-                                    ? "bg-slate-900 text-white dark:bg-white dark:text-black hover:bg-slate-800 dark:hover:bg-gray-200"
-                                    : "bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-500 dark:hover:bg-emerald-600"
-                                }`}
-                              >
-                                <ScanFace className="h-4 w-4" />
-                                {registered ? "Re-register" : "Register"}
-                              </button>
-                            ) : (
-                              <span className="text-sm text-slate-400 dark:text-neutral-500">No access</span>
+                          <td className="px-6 py-4 text-right relative">
+                            <button 
+                              onClick={(e) => { 
+                                e.stopPropagation(); 
+                                setActionMenuId(actionMenuId === user.id ? null : user.id); 
+                              }} 
+                              className="p-2 bg-slate-100 dark:bg-neutral-900 rounded-xl hover:bg-slate-200 transition-colors"
+                            >
+                              <MoreVertical size={16} />
+                            </button>
+
+                            {actionMenuId === user.id && (
+                              <div className="absolute right-6 top-12 w-48 bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-xl shadow-xl z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-100">
+                                {canModifyFaces && (
+                                  <button 
+                                    onClick={() => { setActionMenuId(null); openRegistrationModal(user); }}
+                                    className="w-full text-left px-4 py-3 text-xs font-black text-slate-700 dark:text-neutral-300 hover:bg-slate-50 dark:hover:bg-neutral-800 flex items-center gap-2"
+                                  >
+                                    <ScanFace size={14}/> {hasRegisteredFace(user) ? "Re-register Face" : "Register Face"}
+                                  </button>
+                                )}
+                                {canTransfer && (
+                                  <button 
+                                    onClick={() => { setActionMenuId(null); setTransferModal(user); }}
+                                    className="w-full text-left px-4 py-3 text-xs font-black text-orange-600 hover:bg-orange-50 dark:hover:bg-orange-900/10 flex items-center gap-2"
+                                  >
+                                    <ArrowRight size={14}/> Transfer Branch
+                                  </button>
+                                )}
+                              </div>
                             )}
                           </td>
                         </tr>
@@ -487,59 +544,125 @@ export default function BranchStaffPage() {
                 </table>
               </div>
 
-              <div className="divide-y divide-slate-200 dark:divide-neutral-800 md:hidden">
-                {staff.map((user) => {
-                  const registered = hasRegisteredFace(user);
+              {/* MOBILE LIST VIEW */}
+                {/* MOBILE LIST VIEW */}
+                <div className="divide-y divide-slate-200 dark:divide-neutral-800 md:hidden">
+                  {staff.map((user) => {
+                    const registered = hasRegisteredFace(user);
 
-                  return (
-                    <div key={user.id} className="p-4">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="truncate font-semibold text-slate-900 dark:text-white">
-                            {user.name}
+                    return (
+                      <div key={user.id} className="p-4 relative">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="truncate font-semibold text-slate-900 dark:text-white">
+                              {user.name}
+                            </div>
+                            <div className="mt-1">
+                              <p className="text-sm font-medium text-slate-600 dark:text-neutral-300">
+                                {user.department || "Unassigned"}
+                              </p>
+                              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-0.5">
+                                {user.designation || user.role || "Staff"}
+                              </p>
+                            </div>
                           </div>
-                          <div className="mt-1 text-sm text-slate-500 dark:text-neutral-400">
-                            {getDepartmentLabel(user)}
+
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold ${
+                                registered
+                                  ? "bg-emerald-100 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                                  : "bg-amber-100 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                              }`}
+                            >
+                              {registered ? "Registered" : "Pending"}
+                            </span>
+
+                            {/* MOBILE MORE OPTIONS BUTTON */}
+                            {(canModifyFaces || canTransfer) && (
+                              <button 
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setActionMenuId(actionMenuId === user.id ? null : user.id);
+                                }}
+                                className="p-2 bg-slate-100 dark:bg-neutral-900 rounded-xl text-slate-600 dark:text-neutral-400"
+                              >
+                                <MoreVertical size={18} />
+                              </button>
+                            )}
                           </div>
                         </div>
 
-                        <span
-                          className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold ${
-                            registered
-                              ? "bg-emerald-100 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
-                              : "bg-amber-100 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400"
-                          }`}
-                        >
-                          {registered ? "Registered" : "Pending"}
-                        </span>
-                      </div>
-
-                      <div className="mt-3">
-                        {canModifyFaces ? (
-                          <button
-                            onClick={() => openRegistrationModal(user)}
-                            className={`inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl px-4 py-3 text-sm font-semibold transition active:scale-[0.99] ${
-                              registered
-                                ? "bg-slate-900 text-white dark:bg-white dark:text-black hover:bg-slate-800 dark:hover:bg-gray-200"
-                                : "bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-500 dark:hover:bg-emerald-600"
-                            }`}
-                          >
-                            <ScanFace className="h-4 w-4" />
-                            {registered ? "Re-register Face" : "Register Face"}
-                          </button>
-                        ) : (
-                          <div className="text-sm text-slate-400 dark:text-neutral-500">No access</div>
+                        {/* MOBILE OPTIONS DROPDOWN */}
+                        {actionMenuId === user.id && (
+                          <div className="mt-3 bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 rounded-xl shadow-lg overflow-hidden animate-in fade-in zoom-in-95 duration-100">
+                            {canModifyFaces && (
+                              <button
+                                onClick={() => { setActionMenuId(null); openRegistrationModal(user); }}
+                                className="w-full text-left px-4 py-3 text-xs font-black text-slate-700 dark:text-neutral-300 hover:bg-slate-50 dark:hover:bg-neutral-800 border-b border-slate-100 dark:border-neutral-900 flex items-center gap-2"
+                              >
+                                <ScanFace size={14} /> {registered ? "Re-register Face" : "Register Face"}
+                              </button>
+                            )}
+                            {canTransfer && (
+                              <button
+                                onClick={() => { setActionMenuId(null); setTransferModal(user); }}
+                                className="w-full text-left px-4 py-3 text-xs font-black text-orange-600 hover:bg-orange-50 dark:hover:bg-orange-900/10 flex items-center gap-2"
+                              >
+                                <ArrowRight size={14} /> Transfer Employee
+                              </button>
+                            )}
+                          </div>
                         )}
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
+                    );
+                  })}
+                </div>
             </>
           )}
         </div>
       </div>
 
+      {/* ── TRANSFER MODAL ── */}
+      {transferModal && (
+        <div className="fixed inset-0 z-[150] bg-slate-950/70 dark:bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-[#0a0a0a] rounded-3xl shadow-xl w-full max-w-sm overflow-hidden flex flex-col border border-slate-200 dark:border-neutral-800 animate-in zoom-in-95">
+            <div className="p-5 border-b border-slate-100 dark:border-neutral-900 bg-slate-50/50 dark:bg-[#111] flex justify-between items-center">
+              <h3 className="font-bold text-slate-900 dark:text-white">Transfer Employee</h3>
+              <button onClick={() => setTransferModal(null)} className="p-2 bg-slate-100 dark:bg-neutral-900 rounded-full hover:bg-slate-200 text-slate-500"><X size={16} /></button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div className="bg-orange-50 dark:bg-orange-500/10 border border-orange-100 dark:border-orange-900/30 p-3 rounded-xl flex items-start gap-2">
+                <AlertCircle size={16} className="text-orange-500 shrink-0 mt-0.5" />
+                <p className="text-xs font-semibold text-orange-700 dark:text-orange-400">Transferring <strong>{transferModal.name}</strong> will immediately remove them from your active roster.</p>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest pl-1">Target Branch</label>
+                <select 
+                  value={targetBranchId} 
+                  onChange={e => setTargetBranchId(e.target.value)} 
+                  className="w-full bg-slate-50 dark:bg-[#111] border border-slate-200 dark:border-neutral-800 rounded-xl px-4 py-3 text-sm font-bold text-slate-900 dark:text-white outline-none cursor-pointer"
+                >
+                  <option value="">Select Destination...</option>
+                  {branches.filter(b => b.id !== session.branch_id && b.status === 'active').map(b => (
+                    <option key={b.id} value={b.id}>{b.branch_name}</option>
+                  ))}
+                </select>
+              </div>
+              <button 
+                onClick={handleTransfer} 
+                disabled={transferring || !targetBranchId} 
+                className="w-full py-3.5 bg-slate-900 hover:bg-black dark:bg-white dark:hover:bg-gray-200 text-white dark:text-black text-xs font-black uppercase tracking-widest rounded-xl transition-all disabled:opacity-50 mt-2 flex items-center justify-center gap-2"
+              >
+                {transferring ? <Loader2 size={16} className="animate-spin" /> : <ArrowRight size={16} strokeWidth={3} />}
+                Execute Transfer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── BIOMETRIC MODAL ── */}
       {registeringUser && (
         <div className="fixed inset-0 z-50 bg-slate-950/70 dark:bg-black/80 backdrop-blur-sm">
           <div className="flex h-full w-full items-end justify-center sm:items-center sm:p-4">

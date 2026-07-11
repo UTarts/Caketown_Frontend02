@@ -6,7 +6,7 @@ import { callApi } from "@/lib/apiClient";
 import {
   Banknote, Building2, Calendar, ChevronDown,
   Search, Wallet, CheckCircle2, AlertTriangle,
-  X, History, Loader2, Plus, Trash2, ArrowDownRight, FileText, UserCircle, Unlock, Users
+  X, History, Loader2, Plus, Trash2, ArrowDownRight, FileText, UserCircle, Unlock, Users, ShieldAlert, Check, XCircle
 } from "lucide-react";
 
 const formatCurrency = (val) => `₹${parseFloat(val || 0).toLocaleString("en-IN")}`;
@@ -49,6 +49,7 @@ export default function FinanceLoggingHub() {
 
   const [ledgerData, setLedgerData] = useState([]);
   const [attendanceData, setAttendanceData] = useState([]);
+  const [pendingRequests, setPendingRequests] = useState([]); // NEW STATE
   const [loading, setLoading] = useState(true);
   const [branchFilter, setBranchFilter] = useState(initialBranchId);
   const [searchQuery, setSearchQuery] = useState("");
@@ -61,6 +62,7 @@ export default function FinanceLoggingHub() {
 
   const [searchModalOpen, setSearchModalOpen] = useState(false);
   const [globalSearchQuery, setGlobalSearchQuery] = useState("");
+  const [resolvingId, setResolvingId] = useState(null); // NEW STATE
 
   useEffect(() => {
     const raw = localStorage.getItem("caketown_session");
@@ -70,11 +72,12 @@ export default function FinanceLoggingHub() {
 
   const loadData = useCallback(async () => {
     setLoading(true);
-    const [bRes, uRes, lRes, aRes] = await Promise.all([
+    const [bRes, uRes, lRes, aRes, reqRes] = await Promise.all([
       callApi("get_branches"),
       callApi("get_users"),
       callApi("get_branch_financial_ledger", { branch_id: branchFilter, month: finMonth, year: finYear }),
-      callApi("get_monthly_attendance", { branch_id: branchFilter, month: finMonth, year: finYear })
+      callApi("get_monthly_attendance", { branch_id: branchFilter, month: finMonth, year: finYear }),
+      callApi("get_advance_requests", { branch_id: branchFilter }) // NEW CALL
     ]);
     if (bRes.status === "success") setBranches(bRes.data || []);
     if (uRes.status === "success") {
@@ -82,10 +85,23 @@ export default function FinanceLoggingHub() {
     }
     if (lRes.status === "success") setLedgerData(lRes.data || []);
     if (aRes.status === "success") setAttendanceData(aRes.data || []);
+    if (reqRes.status === "success") setPendingRequests(reqRes.data || []); // NEW SETTER
     setLoading(false);
   }, [branchFilter, finMonth, finYear]);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // NEW RESOLUTION HANDLER
+  const handleResolveRequest = async (record_id, status) => {
+    setResolvingId(record_id);
+    const res = await callApi("resolve_advance_request", { record_id, status, admin_id: session?.id });
+    if (res.status === 'success') {
+      loadData();
+    } else {
+      alert(res.message || "Failed to resolve request");
+    }
+    setResolvingId(null);
+  };
 
   const employeeBalances = useMemo(() => {
     const daysInMonth = new Date(finYear, finMonth, 0).getDate();
@@ -207,22 +223,13 @@ export default function FinanceLoggingHub() {
   };
 
   return (
-    /*
-     * ROOT CONTAINER
-     * - NO fixed width, NO min-width
-     * - w-full + overflow-hidden = nothing escapes the viewport
-     * - box-sizing is border-box so padding never adds to width
-     */
     <div className="w-full overflow-hidden box-border flex flex-col gap-4 pb-24 md:pb-0 animate-in fade-in duration-500">
 
       {/* ══════════════════════════════════════════════════════════════
           HEADER CARD
-          Mobile: title row + stacked controls
-          Desktop: title left, controls right in one row
       ══════════════════════════════════════════════════════════════ */}
       <div className="w-full box-border bg-white/60 dark:bg-neutral-900/40 backdrop-blur-xl border border-gray-200/60 dark:border-neutral-800/60 rounded-3xl shadow-sm p-4 md:p-5">
 
-        {/* Title */}
         <div className="mb-4">
           <div className="flex items-center gap-2 text-orange-600 dark:text-orange-500 mb-1">
             <Wallet size={14} className="shrink-0" />
@@ -233,10 +240,8 @@ export default function FinanceLoggingHub() {
           </h1>
         </div>
 
-        {/* Controls — always stacked on mobile, row on md+ */}
         <div className="flex flex-col gap-3 w-full">
 
-          {/* Row 1: Tab switcher — full width on mobile */}
           <div className="flex items-center bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-xl p-1 shadow-sm w-full">
             <button
               onClick={() => setActiveTab("employees")}
@@ -252,9 +257,7 @@ export default function FinanceLoggingHub() {
             </button>
           </div>
 
-          {/* Row 2: Month/Year picker + Log Transaction button side by side */}
           <div className="flex items-center gap-3 w-full">
-            {/* Month/Year picker — grows to fill available space */}
             <div className="flex items-center gap-2 bg-gray-50 dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-xl px-3 py-2.5 shadow-sm flex-1 min-w-0 min-h-[44px]">
               <Calendar size={14} className="text-orange-500 shrink-0" />
               <select
@@ -276,7 +279,6 @@ export default function FinanceLoggingHub() {
               </select>
             </div>
 
-            {/* Log Transaction button — fixed width, never shrinks to text */}
             <button
               onClick={() => setSearchModalOpen(true)}
               className="flex items-center justify-center gap-1.5 px-4 bg-orange-500 hover:bg-orange-600 active:bg-orange-700 text-white text-xs font-black rounded-xl shadow-lg shadow-orange-500/20 active:scale-95 transition-all shrink-0 min-h-[44px] whitespace-nowrap"
@@ -288,6 +290,53 @@ export default function FinanceLoggingHub() {
 
         </div>
       </div>
+
+      {/* ══════════════════════════════════════════════════════════════
+          PENDING APPROVALS PANEL (ADMIN ONLY)
+      ══════════════════════════════════════════════════════════════ */}
+      {pendingRequests.length > 0 && (
+        <div className="bg-white dark:bg-[#0a0a0a] border border-indigo-200 dark:border-indigo-900/50 rounded-2xl md:rounded-[2rem] shadow-lg shadow-indigo-500/10 overflow-hidden relative">
+           <div className="p-4 md:p-6 bg-indigo-50/50 dark:bg-indigo-500/5 border-b border-indigo-100 dark:border-indigo-900/30 flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-indigo-100 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-400 flex items-center justify-center animate-pulse"><ShieldAlert size={20}/></div>
+              <div>
+                 <h2 className="text-lg font-black text-indigo-900 dark:text-indigo-100">Manager Approvals Required</h2>
+                 <p className="text-xs font-bold text-indigo-600/80 dark:text-indigo-400/80">These requests exceed the 30% safety limit and require your authorization.</p>
+              </div>
+           </div>
+           <div className="p-4 md:p-6 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              {pendingRequests.map(req => {
+                 const T = TYPE_MAP[req.type] || TYPE_MAP.other;
+                 return (
+                   <div key={req.id} className="bg-white dark:bg-[#111] border border-gray-200 dark:border-neutral-800 rounded-2xl p-5 shadow-sm flex flex-col justify-between relative overflow-hidden group">
+                      {resolvingId === req.id && <div className="absolute inset-0 bg-white/80 dark:bg-black/80 backdrop-blur-sm z-10 flex items-center justify-center"><Loader2 className="animate-spin text-indigo-500" size={24}/></div>}
+                      
+                      <div>
+                        <div className="flex items-start justify-between mb-3">
+                           <div>
+                             <span className={`inline-flex px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-widest border ${T.bg} ${T.color} border-current mb-1`}>{T.label}</span>
+                             <p className={`font-mono font-black text-2xl leading-none ${T.color}`}>{formatCurrency(req.amount)}</p>
+                           </div>
+                           <div className="text-right">
+                             <p className="text-xs font-black text-gray-900 dark:text-white truncate max-w-[120px]">{req.user_name}</p>
+                             <p className="text-[9px] font-bold text-gray-500 uppercase tracking-widest">{req.branch_name}</p>
+                           </div>
+                        </div>
+                        <div className="mb-4 bg-gray-50 dark:bg-[#050505] p-3 rounded-xl border border-gray-100 dark:border-neutral-900">
+                           <p className="text-xs font-bold text-gray-600 dark:text-neutral-400 leading-relaxed break-words">{req.remarks}</p>
+                           <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mt-2 pt-2 border-t border-gray-200 dark:border-neutral-800">Requested by: {req.manager_name}</p>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2 mt-auto">
+                         <button onClick={() => handleResolveRequest(req.id, 'rejected')} className="flex items-center justify-center gap-1.5 py-2.5 bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-500/20 text-xs font-black uppercase tracking-widest rounded-xl transition-colors"><XCircle size={14}/> Reject</button>
+                         <button onClick={() => handleResolveRequest(req.id, 'approved')} className="flex items-center justify-center gap-1.5 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-black uppercase tracking-widest rounded-xl transition-colors shadow-md shadow-emerald-500/20"><Check size={14} strokeWidth={3}/> Approve</button>
+                      </div>
+                   </div>
+                 );
+              })}
+           </div>
+        </div>
+      )}
 
       {/* ══════════════════════════════════════════════════════════════
           FILTERS ROW
@@ -318,8 +367,6 @@ export default function FinanceLoggingHub() {
 
       {/* ══════════════════════════════════════════════════════════════
           TAB 1 — EMPLOYEE BALANCES
-          The outer card has overflow-hidden.
-          ONLY the inner <div> with overflow-auto scrolls sideways.
       ══════════════════════════════════════════════════════════════ */}
       {activeTab === "employees" && (
         <div
@@ -338,7 +385,6 @@ export default function FinanceLoggingHub() {
               <p className="text-sm font-bold text-gray-500">Adjust your filters.</p>
             </div>
           ) : (
-            /* ── THIS is the only element that scrolls horizontally ── */
             <div className="overflow-auto flex-1" style={{ WebkitOverflowScrolling: 'touch' }}>
               <table className="text-left border-collapse" style={{ minWidth: '1000px', width: '100%' }}>
                 <thead className="sticky top-0 z-30">

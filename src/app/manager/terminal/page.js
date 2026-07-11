@@ -46,6 +46,19 @@ function formatDuration(minutes) {
   return `${h}h ${m}m`;
 }
 
+// ─── AUDIO FEEDBACK HELPER ───
+const speakText = (text) => {
+  if (typeof window !== "undefined" && 'speechSynthesis' in window) {
+    // Cancel any ongoing speech so the new announcement plays immediately
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.volume = 1;
+    utterance.rate = 1.1; // Slightly faster for quick terminal feedback
+    utterance.pitch = 1;
+    window.speechSynthesis.speak(utterance);
+  }
+};
+
 export default function BiometricTerminal() {
   const router = useRouter();
   const [session, setSession] = useState(null);
@@ -150,6 +163,13 @@ export default function BiometricTerminal() {
 
   const startTerminal = async () => {
     if (!session?.branch_id) return;
+    
+    // --- AUDIO UNLOCK (Mobile Safari/Chrome require user gesture to unlock audio context) ---
+    if (typeof window !== "undefined" && 'speechSynthesis' in window) {
+      const unlock = new SpeechSynthesisUtterance('');
+      window.speechSynthesis.speak(unlock);
+    }
+
     setLoading(true);
     setTerminalActive(true);
     setSystemMessage({ text: "Loading AI models...", type: "loading" });
@@ -317,6 +337,9 @@ export default function BiometricTerminal() {
           
           drawPremiumBox(ctx, resized.detection.box, `PUNCH ${punchType}`, color, canvas.width);
           setSystemMessage({ text: `Success: ${res.user_name} punched ${punchType}`, type: "success" });
+          
+          // ─── AUDIO FEEDBACK TRIGGER ───
+          speakText(`Punched ${punchType.toLowerCase()}`);
           
           await fetchRecentFromDb(session.branch_id, true);
         } else {

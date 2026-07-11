@@ -17,6 +17,7 @@ const getLocalDate = () => {
 };
 
 function calcPaidHolidays(daysPresent, cap) {
+  if (cap === 0) return 0; // FIXED
   if (cap >= 4) {
     if (daysPresent >= 24) return 4;
     if (daysPresent >= 20) return 3;
@@ -36,19 +37,23 @@ function AttendanceMarker({ status, dayData }) {
     P:  { label: "F",  bg: "bg-emerald-100 dark:bg-emerald-500/20", text: "text-emerald-700 dark:text-emerald-400" },
     H:  { label: "H",  bg: "bg-yellow-100 dark:bg-yellow-500/20",   text: "text-yellow-700 dark:text-yellow-400" },
     A:  { label: "A",  bg: "bg-red-100 dark:bg-red-500/20",         text: "text-red-700 dark:text-red-400" },
+    M:  { label: "A",  bg: "bg-red-100 dark:bg-red-500/20",         text: "text-red-700 dark:text-red-400" }, // Maps missing to Absent visually
     L:  { label: "L",  bg: "bg-blue-100 dark:bg-blue-500/20",       text: "text-blue-700 dark:text-blue-400" },
     PH: { label: "★",  bg: "bg-purple-100 dark:bg-purple-500/20",   text: "text-purple-700 dark:text-purple-400" },
     "-":{ label: "–",  bg: "bg-transparent",                        text: "text-gray-300 dark:text-neutral-700" },
   };
+  
   const m = map[status] || map["-"];
   
-  const hasPartialWork = status === 'A' && dayData?.punches?.length > 0 && !dayData?.override;
+  // ROBUST FIX: Detect odd punches strictly for the warning dot, without altering the backend's valid status calculation
+  const hasOddPunches = dayData?.punches?.length > 0 && dayData.punches.length % 2 !== 0;
   const isOverride = dayData?.override;
+  const showPartialWarning = hasOddPunches && !isOverride;
 
   return (
     <span className={`relative inline-flex items-center justify-center w-7 h-7 rounded-lg text-[10px] font-black transition-colors ${m.bg} ${m.text}`}>
       {m.label}
-      {hasPartialWork && (
+      {showPartialWarning && (
         <span title="Incomplete Hours" className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-orange-500 border border-white dark:border-[#0a0a0a] shadow-sm animate-in zoom-in"></span>
       )}
       {isOverride && (
@@ -432,6 +437,7 @@ function AttendanceLedgerContent() {
                       {attendanceGrid.map((row, idx) => {
                         let totF = 0, totH = 0, totA = 0, totL = 0;
                         const todayStr = getLocalDate();
+                        
                         return (
                           <tr key={idx} className="hover:bg-gray-50/50 dark:hover:bg-neutral-900/30 group">
                             <td className="p-3 sticky left-0 bg-white dark:bg-[#0a0a0a] group-hover:bg-gray-50/50 dark:group-hover:bg-[#111] z-10 border-r border-gray-300 dark:border-neutral-700 shadow-[2px_0_8px_rgba(0,0,0,0.05)]">
@@ -439,27 +445,38 @@ function AttendanceLedgerContent() {
                             </td>
                             {[...Array(daysInMonth)].map((_, i) => {
                               const dateStr = `${finYear}-${pad(finMonth)}-${pad(i + 1)}`;
-                              let status = row.days?.[dateStr]?.status || row.days?.[dateStr] || "-";
-                              if (status !== "-" && dateStr > todayStr && !row.days?.[dateStr]?.override) {
-                                status = "-";
+                              const dayData = row.days?.[dateStr] || null;
+                              
+                              let rawStatus = dayData?.status || "-";
+                              
+                              // Treat backend's 'M' (Missing punch out) as 'A'
+                              if (rawStatus === "M") rawStatus = "A";
+
+                              // Blank out future dates ONLY if they aren't explicitly overridden
+                              if (dateStr > todayStr && !dayData?.override) {
+                                rawStatus = "-";
                               }
-                              if (status === "P" || status === "F" || status === "PH") { totF++; if (status !== "PH") status = "F"; }
-                              else if (status === "H") { totH++; }
-                              else if (status === "A") { totA++; }
-                              else if (status === "L") { totL++; }
+
+                              let mathStatus = rawStatus;
+                              if (mathStatus === "P") mathStatus = "F"; 
+
+                              if (mathStatus === "F" || mathStatus === "PH") { totF++; }
+                              else if (mathStatus === "H") { totH++; }
+                              else if (mathStatus === "A") { totA++; }
+                              else if (mathStatus === "L") { totL++; }
 
                               return (
                                 <td
                                   key={i}
                                   onClick={() => {
-                                    const dayData = row.days?.[dateStr] || null;
                                     setOverrideTarget({ user: row, date: dateStr, dayData });
-                                    setOverrideForm({ status: status === "F" || status === "P" ? "F" : (status === "-" ? "L" : status), reason: "" });
+                                    const modalDefault = (mathStatus !== "-" && mathStatus !== "A" && mathStatus !== "P") ? mathStatus : "F";
+                                    setOverrideForm({ status: modalDefault, reason: "" });
                                     fetchOverrideHistory(row.id, dateStr);
                                   }}
                                   className="p-1 text-center border-r border-gray-300 dark:border-neutral-700 transition-colors cursor-pointer hover:bg-blue-50 dark:hover:bg-blue-900/20 min-w-[40px]"
                                 >
-                                  <AttendanceMarker status={status} dayData={row.days?.[dateStr]} />
+                                  <AttendanceMarker status={rawStatus === "P" ? "F" : rawStatus} dayData={dayData} />
                                 </td>
                               );
                             })}

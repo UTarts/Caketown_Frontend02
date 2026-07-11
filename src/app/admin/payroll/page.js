@@ -22,6 +22,7 @@ const TYPE_MAP = {
 };
 
 function calcPaidLeaves(daysPresent, cap) {
+  if (cap === 0) return 0; // FIXED: Handle 0 cap
   if (cap >= 4) {
     if (daysPresent >= 24) return 4;
     if (daysPresent >= 20) return 3;
@@ -35,12 +36,13 @@ function calcPaidLeaves(daysPresent, cap) {
 }
 
 function calcRow(row, daysInMonth) {
-  const salary = parseFloat(row.monthly_fixed_salary || row.salary || 0);
-  const totalDuty = parseFloat(row.total_duty || row.days_worked || row.present || 0);
-  const leaveCap = parseInt(row.max_paid_leaves_cap || row.max_paid_leaves || 4);
+  // FIXED: Using ?? instead of || ensures that if the value is exactly 0, it doesn't get overridden by the fallback
+  const salary = parseFloat(row.monthly_fixed_salary ?? row.salary ?? 0);
+  const totalDuty = parseFloat(row.total_duty ?? row.days_worked ?? row.present ?? 0);
+  const leaveCap = parseInt(row.max_paid_leaves_cap ?? row.max_paid_leaves ?? 4);
   
   const paidLeaves = calcPaidLeaves(totalDuty, leaveCap);
-  const paidDuty = Math.min(daysInMonth, totalDuty + paidLeaves);
+  const paidDuty = totalDuty + paidLeaves; 
   const perDay = daysInMonth > 0 ? salary / daysInMonth : 0;
 
   const preAdvance = parseFloat(row.pre_advance || 0);

@@ -156,6 +156,7 @@ const ALL_PERMISSIONS = [
       { id: "view_staff_profile", label: "View Staff Profiles", read: true, write: false },
       { id: "manage_staff", label: "Add / Edit Staff Details", read: false, write: true },
       { id: "deactivate_staff", label: "Deactivate Personnel", read: false, write: true },
+      { id: "transfer_employee", label: "Transfer Branch", read: false, write: true },
     ],
   },
   {
@@ -178,13 +179,8 @@ const ALL_PERMISSIONS = [
   {
     category: "Payroll & Finance",
     items: [
-      { id: "view_payroll", label: "View Payroll Ledgers", read: true, write: false },
-      { id: "process_payroll", label: "Process / Pay Salaries", read: false, write: true },
-      { id: "download_salary_slip", label: "Download Salary Slips", read: true, write: false },
-      { id: "log_advance", label: "Log Standard Advances", read: false, write: true },
-      { id: "log_shop_bill", label: "Log Shop Bills / Fines", read: false, write: true },
-      { id: "view_finance_ledger", label: "View Master Finance Ledger", read: true, write: false },
-      { id: "delete_finance_record", label: "Void / Delete Finance Records", read: false, write: true },
+      { id: "log_advance", label: "Log Advances", read: false, write: true },
+      { id: "view_finance_ledger", label: "Financial Ledger", read: true, write: true },
     ],
   },
   {
