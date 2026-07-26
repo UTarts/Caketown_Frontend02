@@ -22,7 +22,7 @@ const TYPE_MAP = {
 };
 
 function calcPaidLeaves(daysPresent, cap) {
-  if (cap === 0) return 0; // FIXED: Handle 0 cap
+  if (cap === 0) return 0;
   if (cap >= 4) {
     if (daysPresent >= 24) return 4;
     if (daysPresent >= 20) return 3;
@@ -36,7 +36,6 @@ function calcPaidLeaves(daysPresent, cap) {
 }
 
 function calcRow(row, daysInMonth) {
-  // FIXED: Using ?? instead of || ensures that if the value is exactly 0, it doesn't get overridden by the fallback
   const salary = parseFloat(row.monthly_fixed_salary ?? row.salary ?? 0);
   const totalDuty = parseFloat(row.total_duty ?? row.days_worked ?? row.present ?? 0);
   const leaveCap = parseInt(row.max_paid_leaves_cap ?? row.max_paid_leaves ?? 4);
@@ -52,24 +51,28 @@ function calcRow(row, daysInMonth) {
   const fine = parseFloat(row.fine || 0);
   const other = parseFloat(row.other || 0);
   const paid = parseFloat(row.paid_amount || row.paid || 0);
+  const surplusCredit = parseFloat(row.surplus_credit || 0); // NEW: Underpayment credit from last month
 
   const totalAdvance = preAdvance + finalAdvance + shopAdvance + shopBill;
   const deduction = fine + other;
+  const overpaymentDebt = parseFloat(row.overpayment_debt || 0); 
+
+  const gross = Math.round(perDay * paidDuty);
   
-  const gross = perDay * paidDuty;
-  
-  const theoreticalNet = gross - totalAdvance - deduction;
+  // FIXED: Explicitly subtract the overpayment debt now that it is isolated from standard advances
+  const theoreticalNet = Math.round(gross - totalAdvance - deduction + surplusCredit - overpaymentDebt);
   const salaryToPay = Math.max(0, theoreticalNet);
   const isNegative = theoreticalNet < 0;
 
   return {
     salary, totalDuty, leaveCap, paidLeaves, paidDuty, perDay,
     preAdvance, finalAdvance, shopAdvance, shopBill, totalAdvance,
-    fine, other, deduction, salaryToPay, paid, gross, isNegative, theoreticalNet,
-    // NEW FIELDS:
+    fine, other, deduction, salaryToPay, paid, gross, isNegative, theoreticalNet, surplusCredit, overpaymentDebt,
     paidAmount: parseFloat(row.paid_amount || row.paid || 0),
     carryForwardType: row.carry_forward_type || 'none',
-    carryForwardAmount: parseFloat(row.carry_forward_amount || 0)
+    carryForwardAmount: parseFloat(row.carry_forward_amount || 0),
+    paymentMode: row.payment_mode || "Cash",
+    processedAt: row.processed_at || null,
   };
 }
 
@@ -91,8 +94,7 @@ export default function GlobalPayrollEnginePage() {
   const [session, setSession] = useState(null);
   const [branchId, setBranchId] = useState(urlBranchId);
   const [query, setQuery] = useState("");
-  // NEW: Tab switcher state
-  const [viewMode, setViewMode] = useState("active"); // "active" | "deactivated"
+  const [viewMode, setViewMode] = useState("active");
 
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -103,20 +105,21 @@ export default function GlobalPayrollEnginePage() {
   const [paymentForm, setPaymentForm] = useState({ amount: "", remarks: "", payment_mode: "Cash" });
   const [paymentSubmitting, setPaymentSubmitting] = useState(false);
 
+  // NEW: Detailed Paid Modal state
+  const [paidDetailModal, setPaidDetailModal] = useState(null);
+
   const [inspectedUser, setInspectedUser] = useState(null);
   const [inspectorData, setInspectorData] = useState([]);
 
   const [breakdownModal, setBreakdownModal] = useState(null); 
   const [historyModal, setHistoryModal] = useState(null);
 
-  // NEW: Post-pay adjustment modal state
   const [adjustModal, setAdjustModal] = useState(null);
   const [adjustForm, setAdjustForm] = useState({ adjustment_type: "credit", amount: "", reason: "", payment_mode: "Cash" });
   const [adjustSubmitting, setAdjustSubmitting] = useState(false);
 
   const daysInMonth = new Date(year, month, 0).getDate();
 
-  // ─── SYNC BRANCH CHANGES FROM GLOBAL SIDEBAR ───
   useEffect(() => {
     if (urlBranchId !== branchId) {
       setBranchId(urlBranchId);
@@ -129,7 +132,6 @@ export default function GlobalPayrollEnginePage() {
     try { setSession(JSON.parse(raw)); } catch {}
   }, []);
 
-  // NEW: fetchAll now passes include_inactive based on active tab
   const fetchAll = useCallback(async () => {
     setLoading(true);
     const payrollRes = await callApi("get_monthly_attendance", {
@@ -167,7 +169,6 @@ export default function GlobalPayrollEnginePage() {
     );
   }, [filteredRows, daysInMonth]);
 
-  // ─── UPDATED: PAYMENT HANDLER ───
   const handleProcessPayment = async (e) => {
     e.preventDefault();
     setPaymentSubmitting(true);
@@ -186,7 +187,6 @@ export default function GlobalPayrollEnginePage() {
       setPaymentTarget(null);
       fetchAll();
     } else {
-      // Now displays the exact server error message instead of a generic failure
       alert(res.message || "Failed to process payment.");
     }
   };
@@ -225,7 +225,6 @@ export default function GlobalPayrollEnginePage() {
     }
   };
 
-  // NEW: Post-pay adjustment handlers
   const openAdjustModal = async (user) => {
     setAdjustForm({ adjustment_type: "credit", amount: "", reason: "", payment_mode: "Cash" });
     setAdjustModal({ user, adjustments: [], loading: true });
@@ -313,7 +312,6 @@ export default function GlobalPayrollEnginePage() {
 
       {/* ── TAB SWITCHER (NEW) + SEARCH ──────────────────────────────────── */}
       <div className="flex flex-col sm:flex-row gap-3 shrink-0 w-full min-w-0">
-        {/* Tab switcher */}
         <div className="flex gap-2 shrink-0">
           <button
             onClick={() => setViewMode("active")}
@@ -328,7 +326,6 @@ export default function GlobalPayrollEnginePage() {
             Deactivated
           </button>
         </div>
-        {/* Search */}
         <div className="relative flex-1 min-w-0">
           <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
           <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search employee, department, or role..." className="w-full bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-2xl py-3 pl-11 pr-4 text-sm font-bold text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500/50 transition-all shadow-sm" />
@@ -361,7 +358,8 @@ export default function GlobalPayrollEnginePage() {
                     <th className="p-4 md:p-5 text-right text-orange-600 border border-gray-300 dark:border-neutral-700">Advances</th>
                     <th className="p-4 md:p-5 text-right text-orange-600 border border-gray-300 dark:border-neutral-700">Shop Bills</th>
                     <th className="p-4 md:p-5 text-right text-red-600 border border-gray-300 dark:border-neutral-700">Deductions</th>
-                    <th className="p-4 md:p-5 text-left text-gray-500 border border-gray-300 dark:border-neutral-700">Remarks</th>
+                    {/* FIXED: Remarks column width increased and un-truncated */}
+                    <th className="p-4 md:p-5 text-left text-gray-500 border border-gray-300 dark:border-neutral-700 min-w-[250px]">Remarks</th>
                     <th className="p-4 md:p-5 text-right bg-emerald-50/95 dark:bg-emerald-900/20 text-emerald-800 dark:text-emerald-500 border border-emerald-200 dark:border-emerald-900/50">Net Payable</th>
                     <th className="p-4 md:p-5 text-center border border-gray-300 dark:border-neutral-700">Clearance</th>
                     <th className="p-4 md:p-5 text-center border border-gray-300 dark:border-neutral-700">Slip</th>
@@ -430,14 +428,19 @@ export default function GlobalPayrollEnginePage() {
                           ) : <span className="font-mono text-sm text-gray-400 dark:text-neutral-600">—</span>}
                         </td>
 
-                        <td className="p-4 md:p-5 text-xs font-bold text-gray-600 dark:text-neutral-400 truncate max-w-[150px] border border-gray-300 dark:border-neutral-700">
+                        {/* FIXED: Remarks display allowing full text view */}
+                        <td className="p-4 md:p-5 text-xs font-bold text-gray-600 dark:text-neutral-400 whitespace-normal break-words min-w-[200px] border border-gray-300 dark:border-neutral-700">
                           {row.remarks || "—"}
                         </td>
 
                         <td className="p-4 md:p-5 text-right bg-emerald-50/50 dark:bg-emerald-900/10 border border-emerald-200 dark:border-emerald-900/40">
                           {isPaid ? (
-                             <div className="flex flex-col items-end">
-                                <span className="font-mono font-black text-lg text-emerald-700 dark:text-emerald-400">
+                             <div 
+                               onClick={() => setPaidDetailModal({ staff: row, math: c })}
+                               className="flex flex-col items-end cursor-pointer group/pay hover:bg-emerald-100 dark:hover:bg-emerald-900/30 p-2 -m-2 rounded-xl transition-colors"
+                               title="View Detailed Payment Receipt"
+                             >
+                                <span className="font-mono font-black text-lg text-emerald-700 dark:text-emerald-400 group-hover/pay:text-emerald-800 dark:group-hover/pay:text-emerald-300 transition-colors">
                                   ₹{c.paidAmount.toLocaleString("en-IN")}
                                 </span>
                                 {/* Carry Forward / Adjustment Indicator */}
@@ -463,10 +466,9 @@ export default function GlobalPayrollEnginePage() {
                                  <CheckCircle2 size={12} strokeWidth={3} /> Paid
                                </span>
                                <span className="text-[8px] font-bold text-gray-500">{new Date(row.processed_at).toLocaleDateString()}</span>
-                               {/* NEW: Adjust button for paid rows */}
                                <button
                                  onClick={() => openAdjustModal(row)}
-                                 className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[9px] font-black bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-500/20 transition-all border border-blue-200 dark:border-blue-500/20"
+                                 className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[9px] font-black bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-500/20 transition-all border border-blue-200 dark:border-blue-500/20 mt-1"
                                >
                                  <History size={10} /> Adjust
                                </button>
@@ -523,6 +525,72 @@ export default function GlobalPayrollEnginePage() {
       </div>
 
       {/* ══════════════════════════════════════════════════════════════════
+          MODAL: DETAILED PAID RECEIPT (NEW)
+      ══════════════════════════════════════════════════════════════════ */}
+      {paidDetailModal && (
+        <div className="fixed inset-0 bg-black/60 dark:bg-black/80 backdrop-blur-sm z-[150] flex items-end md:items-center justify-center sm:p-4 shadow-[-10px_0_40px_rgba(0,0,0,0.2)]">
+          <div className="bg-white dark:bg-[#0a0a0a] border border-emerald-300 dark:border-emerald-900/70 w-full max-w-md max-h-[90dvh] md:max-h-[85vh] rounded-t-3xl md:rounded-3xl shadow-2xl animate-in slide-in-from-bottom-full md:zoom-in-95 duration-200 flex flex-col overflow-hidden">
+            <div className="p-5 border-b border-gray-200 dark:border-neutral-800 flex justify-between items-center bg-gray-50 dark:bg-[#111] shrink-0">
+              <h2 className="text-base font-black flex items-center gap-2 text-gray-900 dark:text-white">
+                <CheckCircle2 size={18} className="text-emerald-600" /> Payment Receipt
+              </h2>
+              <button onClick={() => setPaidDetailModal(null)} className="p-2 bg-gray-200 dark:bg-neutral-800 rounded-full hover:bg-gray-300 transition-colors text-gray-700 dark:text-neutral-300"><X size={16} /></button>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto custom-scrollbar p-6 space-y-5">
+              
+              <div className="flex justify-between items-center">
+                <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Employee</span>
+                <span className="font-black text-gray-900 dark:text-white">{paidDetailModal.staff.name}</span>
+              </div>
+              
+              <div className="bg-gray-50 dark:bg-[#111] rounded-2xl p-4 border border-gray-200 dark:border-neutral-800 space-y-3">
+                <div className="flex justify-between items-center">
+                  <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">System Calculated Net</span>
+                  <span className="font-mono font-bold text-gray-700 dark:text-neutral-300">₹{paidDetailModal.math.salaryToPay.toLocaleString("en-IN")}</span>
+                </div>
+                <div className="flex justify-between items-center pt-3 border-t border-gray-200 dark:border-neutral-700">
+                  <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest">Actual Disbursed Amount</span>
+                  <span className="font-mono font-black text-emerald-600 text-xl">₹{paidDetailModal.math.paidAmount.toLocaleString("en-IN")}</span>
+                </div>
+                {paidDetailModal.math.carryForwardAmount > 0 && (
+                  <div className={`p-3 mt-3 rounded-xl flex items-start gap-2 border ${paidDetailModal.math.carryForwardType === 'overpayment' ? 'bg-orange-50 dark:bg-orange-500/10 text-orange-700 dark:text-orange-400 border-orange-200 dark:border-orange-900/50' : 'bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400 border-blue-200 dark:border-blue-900/50'}`}>
+                    <Info size={14} className="shrink-0 mt-0.5" />
+                    <p className="text-[10px] font-bold uppercase tracking-wider leading-snug">
+                      {paidDetailModal.math.carryForwardType === 'overpayment' 
+                        ? `Overpaid by ₹${paidDetailModal.math.carryForwardAmount.toLocaleString("en-IN")} (Recorded as advance for next month)` 
+                        : `Underpaid by ₹${paidDetailModal.math.carryForwardAmount.toLocaleString("en-IN")} (Credited to next month)`}
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-1">Payment Mode</span>
+                  <span className="text-sm font-black text-gray-800 dark:text-neutral-200">{paidDetailModal.math.paymentMode}</span>
+                </div>
+                <div>
+                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-1">Disbursed On</span>
+                  <span className="text-sm font-black text-gray-800 dark:text-neutral-200">
+                    {paidDetailModal.math.processedAt ? new Date(paidDetailModal.math.processedAt).toLocaleDateString("en-IN", { month: "short", day: "numeric", year: "numeric" }) : "—"}
+                  </span>
+                </div>
+              </div>
+
+              <div>
+                 <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-2">Admin Remarks</span>
+                 <div className="text-xs font-bold text-gray-700 dark:text-neutral-300 p-4 bg-gray-50 dark:bg-[#111] rounded-2xl border border-gray-200 dark:border-neutral-800 break-words whitespace-pre-wrap leading-relaxed">
+                   {paidDetailModal.staff.remarks || "No payment remarks provided."}
+                 </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════════
           MODAL: PAYMENT GATEWAY
       ══════════════════════════════════════════════════════════════════ */}
       {paymentTarget && (
@@ -556,6 +624,18 @@ export default function GlobalPayrollEnginePage() {
                      <p className="text-[10px] font-bold text-red-600 uppercase tracking-widest">Deductions</p>
                      <p className="font-mono font-bold text-red-600 dark:text-red-400">-{formatCurrency(paymentTarget.c.deduction)}</p>
                    </div>
+                   {paymentTarget.c.surplusCredit > 0 && (
+                     <div className="flex justify-between items-center text-blue-600 dark:text-blue-400">
+                       <p className="text-[10px] font-bold uppercase tracking-widest">Last Month Credit (+)</p>
+                       <p className="font-mono font-black">+{formatCurrency(paymentTarget.c.surplusCredit)}</p>
+                     </div>
+                   )}
+                   {paymentTarget.c.overpaymentDebt > 0 && (
+                     <div className="flex justify-between items-center text-orange-600 dark:text-orange-400">
+                       <p className="text-[10px] font-bold uppercase tracking-widest">Last Month Overpaid (−)</p>
+                       <p className="font-mono font-black">-{formatCurrency(paymentTarget.c.overpaymentDebt)}</p>
+                     </div>
+                   )}
                    <div className="h-px bg-gray-300 dark:bg-neutral-700 my-1"></div>
                    <div className="flex justify-between items-center">
                      <p className="text-[10px] font-black text-emerald-700 uppercase tracking-widest">Net Payable</p>
@@ -566,7 +646,6 @@ export default function GlobalPayrollEnginePage() {
                 <div className="space-y-4">
                   <div className="space-y-1.5">
                     <label className="text-[10px] font-bold text-gray-600 dark:text-neutral-400 uppercase tracking-widest pl-1">Amount Being Paid</label>
-                    {/* NEW: Carry-forward preview */}
                     {(() => {
                       const systemCalc = parseFloat(paymentTarget.c.salaryToPay);
                       const adminEntered = parseFloat(paymentForm.amount || systemCalc);
@@ -593,7 +672,6 @@ export default function GlobalPayrollEnginePage() {
                       );
                     })()}
                   </div>
-                  {/* NEW: Payment mode selector */}
                   <div className="space-y-1.5">
                     <label className="text-[10px] font-bold text-gray-600 dark:text-neutral-400 uppercase tracking-widest pl-1">Payment Mode</label>
                     <select
@@ -664,6 +742,8 @@ export default function GlobalPayrollEnginePage() {
                 
                 {breakdownModal.math.totalAdvance > 0 && <div className="flex justify-between text-orange-600 font-bold pt-3 border-t border-dashed border-gray-300 dark:border-neutral-700"><span>Advances (Pending)</span><span>−₹{breakdownModal.math.totalAdvance.toFixed(0)}</span></div>}
                 {breakdownModal.math.deduction > 0 && <div className="flex justify-between text-red-600 font-bold"><span>Fines & Deductions</span><span>−₹{breakdownModal.math.deduction.toFixed(0)}</span></div>}
+                {breakdownModal.math.surplusCredit > 0 && <div className="flex justify-between text-blue-600 font-bold pt-3 border-t border-dashed border-gray-300 dark:border-neutral-700"><span>Previous Underpayment Credit</span><span>+₹{breakdownModal.math.surplusCredit.toFixed(0)}</span></div>}
+                {breakdownModal.math.overpaymentDebt > 0 && <div className="flex justify-between text-orange-600 font-bold pt-3 border-t border-dashed border-gray-300 dark:border-neutral-700"><span>Previous Overpayment Debt</span><span>−₹{breakdownModal.math.overpaymentDebt.toFixed(0)}</span></div>}
               </div>
 
               <div className={`flex justify-between items-center px-5 py-4 rounded-2xl border ${breakdownModal.math.isNegative ? 'bg-red-50 dark:bg-red-500/10 border-red-300 dark:border-red-900/60' : 'bg-emerald-50 dark:bg-emerald-500/10 border-emerald-300 dark:border-emerald-900/60'}`}>
