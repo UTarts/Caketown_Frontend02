@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { callApi } from "@/lib/apiClient";
 import {
   Banknote, Calendar, Download, FileText, Search, Wallet, CheckCircle2, 
-  AlertTriangle, X, History, ChevronRight, IndianRupee, Info, Loader2, RefreshCw
+  AlertTriangle, X, History, ChevronRight, IndianRupee, Info, Loader2, RefreshCw, Gift, Package, ArrowDownRight, Check
 } from "lucide-react";
 
 // ─── CORE MATH ENGINE & HELPERS ────────────────────────────────────────────
@@ -35,6 +35,30 @@ function calcPaidLeaves(daysPresent, cap) {
   return 0;
 }
 
+function getTimeSince(dateString) {
+  if (!dateString) return "Unknown";
+  const start = new Date(dateString);
+  const now = new Date();
+  if (start > now) return "0 days";
+  
+  let months = (now.getFullYear() - start.getFullYear()) * 12;
+  months -= start.getMonth();
+  months += now.getMonth();
+  
+  let days = now.getDate() - start.getDate();
+  if (days < 0) {
+    months--;
+    const prevMonth = new Date(now.getFullYear(), now.getMonth(), 0);
+    days += prevMonth.getDate();
+  }
+  
+  const parts = [];
+  if (months > 0) parts.push(`${months} month${months !== 1 ? 's' : ''}`);
+  if (days > 0) parts.push(`${days} day${days !== 1 ? 's' : ''}`);
+  if (parts.length === 0) return "Today";
+  return parts.join(', ');
+}
+
 function calcRow(row, daysInMonth) {
   const salary = parseFloat(row.monthly_fixed_salary ?? row.salary ?? 0);
   const totalDuty = parseFloat(row.total_duty ?? row.days_worked ?? row.present ?? 0);
@@ -50,29 +74,30 @@ function calcRow(row, daysInMonth) {
   const shopBill = parseFloat(row.shop_bill || 0);
   const fine = parseFloat(row.fine || 0);
   const other = parseFloat(row.other || 0);
-  const paid = parseFloat(row.paid_amount || row.paid || 0);
-  const surplusCredit = parseFloat(row.surplus_credit || 0); // NEW: Underpayment credit from last month
+  const bonus = parseFloat(row.bonus || 0); 
+  
+  const surplusCredit = parseFloat(row.surplus_credit || 0); 
+  const overpaymentDebt = parseFloat(row.overpayment_debt || 0); 
 
   const totalAdvance = preAdvance + finalAdvance + shopAdvance + shopBill;
   const deduction = fine + other;
-  const overpaymentDebt = parseFloat(row.overpayment_debt || 0); 
-
-  const gross = Math.round(perDay * paidDuty);
   
-  // FIXED: Explicitly subtract the overpayment debt now that it is isolated from standard advances
-  const theoreticalNet = Math.round(gross - totalAdvance - deduction + surplusCredit - overpaymentDebt);
+  const gross = Math.round(perDay * paidDuty);
+  const theoreticalNet = Math.round(gross + bonus - totalAdvance - deduction + surplusCredit - overpaymentDebt);
   const salaryToPay = Math.max(0, theoreticalNet);
   const isNegative = theoreticalNet < 0;
 
   return {
     salary, totalDuty, leaveCap, paidLeaves, paidDuty, perDay,
     preAdvance, finalAdvance, shopAdvance, shopBill, totalAdvance,
-    fine, other, deduction, salaryToPay, paid, gross, isNegative, theoreticalNet, surplusCredit, overpaymentDebt,
+    fine, other, deduction, bonus, salaryToPay, gross, isNegative, theoreticalNet, surplusCredit, overpaymentDebt,
     paidAmount: parseFloat(row.paid_amount || row.paid || 0),
     carryForwardType: row.carry_forward_type || 'none',
     carryForwardAmount: parseFloat(row.carry_forward_amount || 0),
     paymentMode: row.payment_mode || "Cash",
     processedAt: row.processed_at || null,
+    pendingAssets: row.pending_assets || [],
+    assetCount: parseInt(row.asset_count || 0) 
   };
 }
 
@@ -101,16 +126,14 @@ export default function GlobalPayrollEnginePage() {
   
   const [downloadingId, setDownloadingId] = useState(null);
 
+  // General Modals
   const [paymentTarget, setPaymentTarget] = useState(null);
   const [paymentForm, setPaymentForm] = useState({ amount: "", remarks: "", payment_mode: "Cash" });
   const [paymentSubmitting, setPaymentSubmitting] = useState(false);
 
-  // NEW: Detailed Paid Modal state
   const [paidDetailModal, setPaidDetailModal] = useState(null);
-
   const [inspectedUser, setInspectedUser] = useState(null);
   const [inspectorData, setInspectorData] = useState([]);
-
   const [breakdownModal, setBreakdownModal] = useState(null); 
   const [historyModal, setHistoryModal] = useState(null);
 
@@ -118,12 +141,17 @@ export default function GlobalPayrollEnginePage() {
   const [adjustForm, setAdjustForm] = useState({ adjustment_type: "credit", amount: "", reason: "", payment_mode: "Cash" });
   const [adjustSubmitting, setAdjustSubmitting] = useState(false);
 
+  // New Modals (Bonus & Assets)
+  const [bonusModal, setBonusModal] = useState(null);
+  const [bonusSubmitting, setBonusSubmitting] = useState(false);
+  const [assetModal, setAssetModal] = useState(null);
+  const [assetSubmitting, setAssetSubmitting] = useState(false);
+  const [globalInventory, setGlobalInventory] = useState([]);
+
   const daysInMonth = new Date(year, month, 0).getDate();
 
   useEffect(() => {
-    if (urlBranchId !== branchId) {
-      setBranchId(urlBranchId);
-    }
+    if (urlBranchId !== branchId) setBranchId(urlBranchId);
   }, [urlBranchId]);
 
   useEffect(() => {
@@ -134,13 +162,12 @@ export default function GlobalPayrollEnginePage() {
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
-    const payrollRes = await callApi("get_monthly_attendance", {
-      month,
-      year,
-      branch_id: branchId === "all" ? "" : branchId,
-      include_inactive: viewMode === "deactivated" ? "1" : "0",
-    });
+    const [payrollRes, invRes] = await Promise.all([
+      callApi("get_monthly_attendance", { month, year, branch_id: branchId === "all" ? "" : branchId, include_inactive: viewMode === "deactivated" ? "1" : "0" }),
+      callApi("get_inventory_items")
+    ]);
     if (payrollRes.status === "success") setRows(payrollRes.data || []);
+    if (invRes?.status === "success") setGlobalInventory(invRes.data || []);
     setLoading(false);
   }, [month, year, branchId, viewMode]);
 
@@ -159,13 +186,21 @@ export default function GlobalPayrollEnginePage() {
         const c = calcRow(row, daysInMonth);
         acc.salary += c.salary;
         acc.gross += c.gross;
+        acc.bonus += c.bonus;
         acc.totalAdvance += c.totalAdvance;
         acc.deduction += c.deduction;
         acc.salaryToPay += c.salaryToPay;
-        acc.paid += c.paid;
+        
+        if (row.status === 'paid' || row.ledger_status === 'paid') {
+            acc.paid += c.paidAmount;
+            acc.clearedCount += 1;
+            const mode = c.paymentMode || 'Cash';
+            acc.paymentStats[mode] = (acc.paymentStats[mode] || 0) + c.paidAmount;
+        }
+
         return acc;
       },
-      { salary: 0, gross: 0, totalAdvance: 0, deduction: 0, salaryToPay: 0, paid: 0 }
+      { salary: 0, gross: 0, bonus: 0, totalAdvance: 0, deduction: 0, salaryToPay: 0, paid: 0, clearedCount: 0, paymentStats: {} }
     );
   }, [filteredRows, daysInMonth]);
 
@@ -257,6 +292,79 @@ export default function GlobalPayrollEnginePage() {
     }
   };
 
+  const handleLogBonus = async (e) => {
+    e.preventDefault();
+    setBonusSubmitting(true);
+    const res = await callApi("log_bonus", {
+      user_id: bonusModal.user.id || bonusModal.user.user_id, branch_id: bonusModal.user.branch_id,
+      month, year, amount: parseFloat(bonusModal.amount), remarks: bonusModal.remarks, admin_id: session?.id
+    });
+    setBonusSubmitting(false);
+    if (res.status === "success") {
+      setBonusModal(null); fetchAll();
+    } else alert(res.message || "Failed to log bonus.");
+  };
+
+  const openAssetModal = async (user) => {
+    setAssetModal({ user, assets: [], assignForm: { item_id: "", cost: "", remarks: "", assigned_date: new Date().toISOString().split('T')[0] }, loading: true });
+    const res = await callApi("get_employee_assets", { user_id: user.id || user.user_id });
+    setAssetModal(prev => ({ ...prev, assets: res.status === "success" ? res.data : [], loading: false }));
+  };
+
+  const handleAssignAsset = async (e) => {
+    e.preventDefault();
+    setAssetSubmitting(true);
+    const res = await callApi("assign_asset", {
+      user_id: assetModal.user.id || assetModal.user.user_id, branch_id: assetModal.user.branch_id,
+      item_id: assetModal.assignForm.item_id, cost: parseFloat(assetModal.assignForm.cost),
+      remarks: assetModal.assignForm.remarks, admin_id: session?.id, assigned_date: assetModal.assignForm.assigned_date
+    });
+    setAssetSubmitting(false);
+    if (res.status === "success") openAssetModal(assetModal.user);
+    else alert(res.message || "Failed to assign asset.");
+  };
+
+  const handleResolveAsset = async (asset_log_id, resolution, user_id) => {
+    if (resolution === 'deducted' && !confirm("This will permanently deduct the asset cost from the employee's current salary as a fine. Proceed?")) return;
+    if (resolution === 'waived' && !confirm("This will permanently waive off the asset cost for this employee. Proceed?")) return;
+    
+    setAssetSubmitting(true);
+    const res = await callApi("resolve_asset", { asset_log_id, resolution, admin_id: session?.id, month, year });
+    setAssetSubmitting(false);
+    
+    if (res.status === "success") {
+        await fetchAll();
+        if (assetModal && (assetModal.user.id === user_id || assetModal.user.user_id === user_id)) {
+            setAssetModal(null);
+        }
+        if (paymentTarget) setPaymentTarget(null);
+        if (breakdownModal) setBreakdownModal(null);
+    } else alert(res.message || "Failed to resolve asset.");
+  };
+
+  // Helper UI component for rendering the side panel inside Breakdown and Payment Modals
+  const renderPendingAssets = (pendingAssets, userId) => (
+    <div className="space-y-3 mt-4">
+      {pendingAssets.map(asset => (
+        <div key={asset.id} className="bg-purple-50 dark:bg-purple-900/10 border border-purple-200 dark:border-purple-900/30 p-4 rounded-xl flex flex-col justify-between">
+          <div className="flex justify-between items-start mb-3">
+             <div>
+                <h4 className="font-black text-sm text-purple-900 dark:text-purple-100">{asset.item_name}</h4>
+                <p className="font-mono text-xs font-bold text-purple-700 dark:text-purple-400">₹{parseFloat(asset.cost).toLocaleString("en-IN")}</p>
+             </div>
+             <span className="bg-purple-200 dark:bg-purple-800 text-purple-800 dark:text-purple-200 text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded">
+               {getTimeSince(asset.created_at)}
+             </span>
+          </div>
+          <div className="grid grid-cols-2 gap-2 mt-auto">
+            <button onClick={() => handleResolveAsset(asset.id, 'waived', userId)} disabled={assetSubmitting} className="py-2.5 bg-white dark:bg-black text-emerald-600 hover:bg-emerald-50 text-[10px] font-black uppercase tracking-widest border border-emerald-200 rounded-lg transition-colors">Waive Off</button>
+            <button onClick={() => handleResolveAsset(asset.id, 'deducted', userId)} disabled={assetSubmitting} className="py-2.5 bg-white dark:bg-black text-red-600 hover:bg-red-50 text-[10px] font-black uppercase tracking-widest border border-red-200 rounded-lg transition-colors">Deduct Fine</button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+
   const totalCleared = filteredRows.filter(p => p.status === 'paid' || p.ledger_status === 'paid').length;
 
   return (
@@ -291,26 +399,56 @@ export default function GlobalPayrollEnginePage() {
       </div>
 
       {/* ── STAT CARDS ─────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 shrink-0 w-full min-w-0">
-        {[
-          { label: "Total Gross", value: totals.gross, color: "text-gray-900 dark:text-white", icon: IndianRupee },
-          { label: "Pending Debts", value: totals.totalAdvance + totals.deduction, color: "text-orange-500", icon: Wallet },
-          { label: "Net Payable", value: totals.salaryToPay, color: "text-emerald-500", icon: Banknote },
-          { label: "Staff Paid", value: totalCleared, color: "text-blue-500", icon: CheckCircle2, isCount: true },
-        ].map((card) => (
-          <div key={card.label} className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-2xl p-4 shadow-sm flex flex-col justify-between">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 md:gap-4 shrink-0 w-full min-w-0">
+        <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-2xl p-4 shadow-sm flex flex-col justify-between">
             <div className="flex items-center justify-between mb-2">
-              <p className="text-[9px] md:text-[10px] uppercase tracking-widest font-black text-gray-400 truncate pr-2">{card.label}</p>
-              <card.icon size={14} className="text-gray-400 opacity-50 shrink-0" />
+              <p className="text-[9px] md:text-[10px] uppercase tracking-widest font-black text-gray-400 truncate pr-2">Total Gross</p>
+              <IndianRupee size={14} className="text-gray-400 opacity-50 shrink-0" />
             </div>
-            <p className={`text-xl md:text-2xl font-black tabular-nums truncate ${card.color}`}>
-              {card.isCount ? `${card.value} / ${filteredRows.length}` : `₹${Math.round(card.value).toLocaleString("en-IN")}`}
-            </p>
-          </div>
-        ))}
+            <p className="text-xl md:text-2xl font-black tabular-nums truncate text-gray-900 dark:text-white">₹{Math.round(totals.gross).toLocaleString("en-IN")}</p>
+        </div>
+        <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-2xl p-4 shadow-sm flex flex-col justify-between">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-[9px] md:text-[10px] uppercase tracking-widest font-black text-gray-400 truncate pr-2">Total Bonus</p>
+              <Gift size={14} className="text-gray-400 opacity-50 shrink-0" />
+            </div>
+            <p className="text-xl md:text-2xl font-black tabular-nums truncate text-emerald-500">₹{Math.round(totals.bonus).toLocaleString("en-IN")}</p>
+        </div>
+        <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-2xl p-4 shadow-sm flex flex-col justify-between">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-[9px] md:text-[10px] uppercase tracking-widest font-black text-gray-400 truncate pr-2">Debts / Fines</p>
+              <Wallet size={14} className="text-gray-400 opacity-50 shrink-0" />
+            </div>
+            <p className="text-xl md:text-2xl font-black tabular-nums truncate text-orange-500">₹{Math.round(totals.totalAdvance + totals.deduction).toLocaleString("en-IN")}</p>
+        </div>
+        <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-2xl p-4 shadow-sm flex flex-col justify-between">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-[9px] md:text-[10px] uppercase tracking-widest font-black text-gray-400 truncate pr-2">Net Payable</p>
+              <Banknote size={14} className="text-gray-400 opacity-50 shrink-0" />
+            </div>
+            <p className="text-xl md:text-2xl font-black tabular-nums truncate text-indigo-500">₹{Math.round(totals.salaryToPay).toLocaleString("en-IN")}</p>
+        </div>
+        
+        {/* Payment Stats Breakdown Card */}
+        <div className="col-span-2 lg:col-span-1 bg-white dark:bg-[#0a0a0a] border border-emerald-200 dark:border-emerald-900/40 rounded-2xl p-4 shadow-sm flex flex-col justify-between">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-[9px] md:text-[10px] uppercase tracking-widest font-black text-emerald-600 dark:text-emerald-500 truncate pr-2">Total Disbursed ({totals.clearedCount} Paid)</p>
+              <CheckCircle2 size={14} className="text-emerald-500 opacity-50 shrink-0" />
+            </div>
+            <p className="text-xl font-black tabular-nums truncate text-emerald-600 dark:text-emerald-400">₹{Math.round(totals.paid).toLocaleString("en-IN")}</p>
+            {Object.keys(totals.paymentStats).length > 0 && (
+                <div className="mt-2 pt-2 border-t border-emerald-100 dark:border-emerald-900/30 flex flex-wrap gap-1.5">
+                  {Object.entries(totals.paymentStats).map(([mode, amt]) => (
+                    <div key={mode} className="text-[9px] font-bold bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 px-1.5 py-0.5 rounded border border-emerald-100 dark:border-emerald-800/30">
+                      {mode}: ₹{amt.toLocaleString("en-IN")}
+                    </div>
+                  ))}
+                </div>
+            )}
+        </div>
       </div>
 
-      {/* ── TAB SWITCHER (NEW) + SEARCH ──────────────────────────────────── */}
+      {/* ── TAB SWITCHER + SEARCH ──────────────────────────────────── */}
       <div className="flex flex-col sm:flex-row gap-3 shrink-0 w-full min-w-0">
         <div className="flex gap-2 shrink-0">
           <button
@@ -348,18 +486,20 @@ export default function GlobalPayrollEnginePage() {
             </div>
           ) : (
             <div className="flex-1 w-full overflow-auto custom-scrollbar relative">
-              <table className="w-full text-left border-collapse min-w-[1600px]">
+              <table className="w-full text-left border-collapse min-w-[1900px]">
                 <thead className="sticky top-0 z-30">
                   <tr className="bg-gray-100 dark:bg-[#050505] backdrop-blur-md text-[10px] font-black text-gray-500 uppercase tracking-widest whitespace-nowrap shadow-sm">
                     <th className="p-4 md:p-5 sticky left-0 bg-gray-100 dark:bg-[#050505] z-40 border border-gray-300 dark:border-neutral-700 shadow-[4px_0_12px_rgba(0,0,0,0.02)]">Personnel</th>
                     <th className="p-4 md:p-5 text-right border border-gray-300 dark:border-neutral-700">Fixed Salary</th>
+                    <th className="p-4 md:p-5 text-right text-blue-600 border border-gray-300 dark:border-neutral-700">Last M. Surplus</th>
                     <th className="p-4 md:p-5 text-center text-blue-600 bg-blue-50/95 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-900/50">Verified Duty</th>
                     <th className="p-4 md:p-5 text-right border border-gray-300 dark:border-neutral-700">Gross Earned</th>
+                    <th className="p-4 md:p-5 text-right text-emerald-600 border border-gray-300 dark:border-neutral-700">Bonus</th>
                     <th className="p-4 md:p-5 text-right text-orange-600 border border-gray-300 dark:border-neutral-700">Advances</th>
                     <th className="p-4 md:p-5 text-right text-orange-600 border border-gray-300 dark:border-neutral-700">Shop Bills</th>
                     <th className="p-4 md:p-5 text-right text-red-600 border border-gray-300 dark:border-neutral-700">Deductions</th>
-                    {/* FIXED: Remarks column width increased and un-truncated */}
-                    <th className="p-4 md:p-5 text-left text-gray-500 border border-gray-300 dark:border-neutral-700 min-w-[250px]">Remarks</th>
+                    <th className="p-4 md:p-5 text-center text-purple-600 border border-gray-300 dark:border-neutral-700">Assets / Extra</th>
+                    <th className="p-4 md:p-5 text-left text-gray-500 border border-gray-300 dark:border-neutral-700 min-w-[200px]">Remarks</th>
                     <th className="p-4 md:p-5 text-right bg-emerald-50/95 dark:bg-emerald-900/20 text-emerald-800 dark:text-emerald-500 border border-emerald-200 dark:border-emerald-900/50">Net Payable</th>
                     <th className="p-4 md:p-5 text-center border border-gray-300 dark:border-neutral-700">Clearance</th>
                     <th className="p-4 md:p-5 text-center border border-gray-300 dark:border-neutral-700">Slip</th>
@@ -393,6 +533,10 @@ export default function GlobalPayrollEnginePage() {
                         
                         <td className="p-4 md:p-5 text-right font-mono font-bold text-sm text-gray-700 dark:text-neutral-300 border border-gray-300 dark:border-neutral-700">₹{c.salary.toLocaleString("en-IN")}</td>
                         
+                        <td className="p-4 md:p-5 text-right font-mono font-bold text-sm text-blue-600 dark:text-blue-400 border border-gray-300 dark:border-neutral-700">
+                          {c.surplusCredit > 0 ? `+₹${c.surplusCredit.toLocaleString("en-IN")}` : "—"}
+                        </td>
+
                         <td className="p-0 bg-blue-50/20 dark:bg-blue-900/10 border border-blue-200 dark:border-blue-900/40">
                           <button onClick={() => openMiniLedger(row)} className="w-full h-full p-4 flex flex-col items-center justify-center hover:bg-blue-100 dark:hover:bg-blue-900/30 transition-colors group/btn min-h-[64px]">
                             <div className="flex items-center justify-center gap-1.5 font-mono font-black text-sm text-blue-700 dark:text-blue-400">
@@ -403,6 +547,17 @@ export default function GlobalPayrollEnginePage() {
                         </td>
                         
                         <td className="p-4 md:p-5 text-right font-mono font-bold text-sm text-gray-700 dark:text-neutral-300 border border-gray-300 dark:border-neutral-700">₹{c.gross.toLocaleString("en-IN")}</td>
+
+                        {/* BONUS COLUMN */}
+                        <td className="p-4 md:p-5 text-right border border-gray-300 dark:border-neutral-700">
+                          {c.bonus > 0 ? (
+                             <button onClick={() => openHistoryModal(row, ["bonus"], "Bonus")} className="font-mono text-sm font-black hover:underline text-emerald-700 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-500/20 px-2.5 py-1 rounded-lg transition-colors border border-emerald-200 dark:border-emerald-500/30">
+                               +₹{c.bonus.toLocaleString("en-IN")}
+                             </button>
+                          ) : (
+                             !isPaid && <button onClick={() => setBonusModal({ user: row, amount: "", remarks: "" })} className="p-1.5 bg-gray-100 dark:bg-neutral-800 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 hover:text-emerald-600 rounded text-gray-400 transition-colors"><Gift size={14}/></button>
+                          )}
+                        </td>
 
                         <td className="p-4 md:p-5 text-right border border-gray-300 dark:border-neutral-700">
                           {combinedAdvances > 0 ? (
@@ -428,7 +583,15 @@ export default function GlobalPayrollEnginePage() {
                           ) : <span className="font-mono text-sm text-gray-400 dark:text-neutral-600">—</span>}
                         </td>
 
-                        {/* FIXED: Remarks display allowing full text view */}
+                        {/* ASSETS / EXTRAS COLUMN */}
+                        <td className="p-4 md:p-5 text-center border border-gray-300 dark:border-neutral-700 relative">
+                           <button onClick={() => openAssetModal(row)} className={`font-mono text-xs font-black px-2.5 py-1.5 rounded-lg transition-colors flex items-center justify-center gap-1.5 mx-auto ${c.assetCount > 0 ? 'bg-purple-100 dark:bg-purple-500/20 text-purple-700 dark:text-purple-400 border border-purple-200 dark:border-purple-500/30' : 'bg-gray-100 dark:bg-neutral-800 text-gray-500 hover:bg-purple-50 dark:hover:bg-purple-900/20 hover:text-purple-600'}`}>
+                             <Package size={14}/> {c.assetCount > 0 ? `${c.assetCount} Item(s)` : "Manage"}
+                           </button>
+                           {c.assetCount > 0 && <span className="absolute top-4 right-4 md:right-8 w-2 h-2 bg-red-500 rounded-full animate-ping"></span>}
+                           {c.assetCount > 0 && <span className="absolute top-4 right-4 md:right-8 w-2 h-2 bg-red-500 rounded-full"></span>}
+                        </td>
+
                         <td className="p-4 md:p-5 text-xs font-bold text-gray-600 dark:text-neutral-400 whitespace-normal break-words min-w-[200px] border border-gray-300 dark:border-neutral-700">
                           {row.remarks || "—"}
                         </td>
@@ -505,11 +668,14 @@ export default function GlobalPayrollEnginePage() {
                   <tr className="border-t-2 border-gray-300 dark:border-neutral-600 bg-gray-100 dark:bg-[#050505] backdrop-blur-md font-black shadow-[0_-4px_12px_rgba(0,0,0,0.02)] text-gray-700 dark:text-neutral-300">
                     <td className="p-4 md:p-5 sticky left-0 z-40 bg-gray-100 dark:bg-[#050505] border border-gray-300 dark:border-neutral-700 shadow-[4px_0_12px_rgba(0,0,0,0.02)]">Grand Total</td>
                     <td className="p-4 md:p-5 text-right font-mono border border-gray-300 dark:border-neutral-700">₹{Math.round(totals.salary).toLocaleString("en-IN")}</td>
+                    <td className="p-4 md:p-5 text-right border border-gray-300 dark:border-neutral-700">—</td>
                     <td className="p-4 md:p-5 text-center bg-blue-100/50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-900/50">—</td>
                     <td className="p-4 md:p-5 text-right font-mono text-gray-600 dark:text-gray-400 border border-gray-300 dark:border-neutral-700">₹{Math.round(totals.gross).toLocaleString("en-IN")}</td>
+                    <td className="p-4 md:p-5 text-right font-mono text-emerald-600 border border-gray-300 dark:border-neutral-700">₹{Math.round(totals.bonus).toLocaleString("en-IN")}</td>
                     <td className="p-4 md:p-5 text-right font-mono text-orange-600 border border-gray-300 dark:border-neutral-700">—</td>
                     <td className="p-4 md:p-5 text-right font-mono text-orange-600 border border-gray-300 dark:border-neutral-700">—</td>
                     <td className="p-4 md:p-5 text-right font-mono text-red-600 border border-gray-300 dark:border-neutral-700">—</td>
+                    <td className="p-4 md:p-5 text-center border border-gray-300 dark:border-neutral-700">—</td>
                     <td className="p-4 md:p-5 text-center border border-gray-300 dark:border-neutral-700">—</td>
                     <td className="p-4 md:p-5 text-right font-mono text-emerald-700 dark:text-emerald-400 bg-emerald-100/50 dark:bg-emerald-900/30 border border-emerald-300 dark:border-emerald-900/60">
                       ₹{Math.round(totals.salaryToPay).toLocaleString("en-IN")}
@@ -525,7 +691,7 @@ export default function GlobalPayrollEnginePage() {
       </div>
 
       {/* ══════════════════════════════════════════════════════════════════
-          MODAL: DETAILED PAID RECEIPT (NEW)
+          MODAL: DETAILED PAID RECEIPT 
       ══════════════════════════════════════════════════════════════════ */}
       {paidDetailModal && (
         <div className="fixed inset-0 bg-black/60 dark:bg-black/80 backdrop-blur-sm z-[150] flex items-end md:items-center justify-center sm:p-4 shadow-[-10px_0_40px_rgba(0,0,0,0.2)]">
@@ -595,7 +761,7 @@ export default function GlobalPayrollEnginePage() {
       ══════════════════════════════════════════════════════════════════ */}
       {paymentTarget && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[150] flex items-end md:items-center justify-center sm:p-4 shadow-[-10px_0_40px_rgba(0,0,0,0.2)]">
-          <div className="bg-white dark:bg-[#0a0a0a] border border-emerald-300 dark:border-emerald-900/70 w-full md:max-w-md max-h-[90dvh] md:max-h-[85vh] rounded-t-3xl md:rounded-3xl shadow-2xl animate-in slide-in-from-bottom-full md:zoom-in-95 duration-200 flex flex-col overflow-hidden">
+          <div className={`bg-white dark:bg-[#0a0a0a] border border-emerald-300 dark:border-emerald-900/70 w-full ${paymentTarget.c.pendingAssets.length > 0 ? 'max-w-4xl' : 'max-w-md'} max-h-[90dvh] md:max-h-[85vh] rounded-t-3xl md:rounded-3xl shadow-2xl animate-in slide-in-from-bottom-full md:zoom-in-95 duration-200 flex flex-col overflow-hidden`}>
             
             <div className="p-4 md:p-5 border-b border-gray-200 dark:border-neutral-800 flex justify-between items-center bg-gray-50 dark:bg-[#111] shrink-0">
               <h2 className="text-base font-black flex items-center gap-2 text-gray-900 dark:text-white">
@@ -604,9 +770,9 @@ export default function GlobalPayrollEnginePage() {
               <button onClick={() => setPaymentTarget(null)} className="p-2 bg-gray-200 dark:bg-neutral-800 rounded-full hover:bg-gray-300 transition-colors text-gray-700 dark:text-neutral-300"><X size={16} /></button>
             </div>
             
-            <form onSubmit={handleProcessPayment} className="flex flex-col flex-1 min-h-0">
-              <div className="flex-1 overflow-y-auto custom-scrollbar p-5 md:p-6 space-y-6">
-                
+            <div className={`flex-1 overflow-y-auto custom-scrollbar p-5 md:p-6 ${paymentTarget.c.pendingAssets.length > 0 ? 'grid grid-cols-1 lg:grid-cols-2 gap-6' : 'space-y-6'}`}>
+              
+              <form onSubmit={handleProcessPayment} className="flex flex-col min-h-0 space-y-6">
                 <div className="bg-gray-50 dark:bg-neutral-900/60 p-4 rounded-2xl flex flex-col gap-2 border border-gray-200 dark:border-neutral-700">
                    <div className="flex justify-between items-center">
                      <p className="text-[10px] font-bold text-gray-600 uppercase tracking-widest">Employee</p>
@@ -616,6 +782,12 @@ export default function GlobalPayrollEnginePage() {
                      <p className="text-[10px] font-bold text-gray-600 uppercase tracking-widest">Gross Earned</p>
                      <p className="font-mono font-bold text-gray-700 dark:text-neutral-300">{formatCurrency(paymentTarget.c.gross)}</p>
                    </div>
+                   {paymentTarget.c.bonus > 0 && (
+                     <div className="flex justify-between items-center">
+                       <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest">Bonus (+)</p>
+                       <p className="font-mono font-bold text-emerald-600 dark:text-emerald-400">+{formatCurrency(paymentTarget.c.bonus)}</p>
+                     </div>
+                   )}
                    <div className="flex justify-between items-center">
                      <p className="text-[10px] font-bold text-orange-600 uppercase tracking-widest">Pending Advances</p>
                      <p className="font-mono font-bold text-orange-600 dark:text-orange-400">-{formatCurrency(paymentTarget.c.totalAdvance)}</p>
@@ -691,7 +863,7 @@ export default function GlobalPayrollEnginePage() {
                   </div>
                 </div>
 
-                <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-900/40 rounded-xl p-3 flex items-start gap-3">
+                <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-900/40 rounded-xl p-3 flex items-start gap-3 mt-auto">
                   <AlertTriangle size={16} className="text-red-500 shrink-0 mt-0.5" />
                   <div>
                       <p className="text-[10px] font-black text-red-700 dark:text-red-400 uppercase tracking-widest mb-0.5">Payment Warning</p>
@@ -700,15 +872,39 @@ export default function GlobalPayrollEnginePage() {
                       </p>
                   </div>
                 </div>
-              </div>
-
-              <div className="p-4 md:p-5 border-t border-gray-200 dark:border-neutral-800 bg-white dark:bg-[#0a0a0a] shrink-0 pb-safe">
-                <button type="submit" disabled={paymentSubmitting} className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-black rounded-2xl flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/30 active:scale-[0.98] transition-all disabled:opacity-50">
+                
+                <button type="submit" disabled={paymentSubmitting} className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-black rounded-2xl flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/30 active:scale-[0.98] transition-all disabled:opacity-50">
                   {paymentSubmitting ? <Loader2 size={18} className="animate-spin" /> : <CheckCircle2 size={18} strokeWidth={2.5} />} 
                   Confirm Payment
                 </button>
-              </div>
-            </form>
+              </form>
+
+              {paymentTarget.c.pendingAssets.length > 0 && (
+                 <div className="border-t lg:border-t-0 lg:border-l border-gray-200 dark:border-neutral-800 pt-6 lg:pt-0 lg:pl-6">
+                    <h3 className="text-sm font-black flex items-center gap-2 text-purple-600"><Package size={16}/> Pending Extra Items</h3>
+                    <div className="space-y-3 mt-4">
+                      {paymentTarget.c.pendingAssets.map(asset => (
+                        <div key={asset.id} className="bg-purple-50 dark:bg-purple-900/10 border border-purple-200 dark:border-purple-900/30 p-4 rounded-xl flex flex-col justify-between">
+                          <div className="flex justify-between items-start mb-2">
+                             <div>
+                                <h4 className="font-black text-sm text-purple-900 dark:text-purple-100">{asset.item_name}</h4>
+                                <p className="font-mono text-xs font-bold text-purple-700 dark:text-purple-400">₹{parseFloat(asset.cost).toLocaleString("en-IN")}</p>
+                             </div>
+                             <span className="bg-purple-200 dark:bg-purple-800 text-purple-800 dark:text-purple-200 text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded">
+                               {getTimeSince(asset.created_at)}
+                             </span>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2 mt-2">
+                            <button onClick={() => handleResolveAsset(asset.id, 'waived', paymentTarget.id)} disabled={assetSubmitting} className="py-2 bg-white dark:bg-black text-emerald-600 hover:bg-emerald-50 text-[10px] font-black uppercase tracking-widest border border-emerald-200 rounded-lg transition-colors">Waive Off</button>
+                            <button onClick={() => handleResolveAsset(asset.id, 'deducted', paymentTarget.id)} disabled={assetSubmitting} className="py-2 bg-white dark:bg-black text-red-600 hover:bg-red-50 text-[10px] font-black uppercase tracking-widest border border-red-200 rounded-lg transition-colors">Deduct (Fine)</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                 </div>
+              )}
+
+            </div>
           </div>
         </div>
       )}
@@ -718,40 +914,69 @@ export default function GlobalPayrollEnginePage() {
       ══════════════════════════════════════════════════════════════════ */}
       {breakdownModal && (
         <div className="fixed inset-0 bg-black/60 dark:bg-black/80 backdrop-blur-sm z-[100] flex items-end md:items-center justify-center sm:p-4 shadow-[-10px_0_40px_rgba(0,0,0,0.2)]">
-          <div className="bg-white dark:bg-[#0a0a0a] border border-gray-300 dark:border-neutral-700 w-full max-w-md max-h-[90dvh] md:max-h-[85vh] rounded-t-3xl md:rounded-3xl shadow-2xl animate-in slide-in-from-bottom-full md:zoom-in-95 duration-200 flex flex-col overflow-hidden">
+          <div className={`bg-white dark:bg-[#0a0a0a] border border-gray-300 dark:border-neutral-700 w-full ${breakdownModal.math.pendingAssets.length > 0 ? 'max-w-4xl' : 'max-w-md'} max-h-[90dvh] md:max-h-[85vh] rounded-t-3xl md:rounded-3xl shadow-2xl animate-in slide-in-from-bottom-full md:zoom-in-95 duration-200 flex flex-col overflow-hidden`}>
             
             <div className="p-4 md:p-5 border-b border-gray-200 dark:border-neutral-800 flex justify-between items-center bg-gray-50 dark:bg-neutral-900/40 shrink-0">
               <h2 className="text-sm font-black flex items-center gap-2"><Info size={16} className="text-emerald-600" /> Math Breakdown</h2>
               <button onClick={() => setBreakdownModal(null)} className="p-2 bg-gray-200 dark:bg-neutral-800 rounded-full hover:bg-gray-300 transition-colors"><X size={16} /></button>
             </div>
             
-            <div className="flex-1 overflow-y-auto custom-scrollbar p-5 md:p-6 space-y-6 pb-safe">
+            <div className={`flex-1 overflow-y-auto custom-scrollbar p-5 md:p-6 ${breakdownModal.math.pendingAssets.length > 0 ? 'grid grid-cols-1 md:grid-cols-2 gap-6' : 'space-y-6'} pb-safe`}>
               <div>
-                <p className="font-black text-xl text-gray-900 dark:text-white leading-tight">{breakdownModal.staff.name}</p>
-                <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mt-1">{breakdownModal.staff.role}</p>
+                <div>
+                  <p className="font-black text-xl text-gray-900 dark:text-white leading-tight">{breakdownModal.staff.name}</p>
+                  <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mt-1">{breakdownModal.staff.role}</p>
+                </div>
+
+                <div className="space-y-3 font-mono text-sm bg-gray-50 dark:bg-[#111] border border-gray-200 dark:border-neutral-700 p-5 rounded-2xl mt-6">
+                  <div className="flex justify-between text-gray-600 dark:text-neutral-400"><span>Fixed Salary</span><span className="font-bold text-gray-900 dark:text-white">₹{breakdownModal.math.salary.toLocaleString("en-IN")}</span></div>
+                  <div className="flex justify-between text-gray-600 dark:text-neutral-400"><span>Days in Month</span><span className="font-bold text-gray-900 dark:text-white">{breakdownModal.daysInMonth}</span></div>
+                  <div className="flex justify-between text-gray-600 dark:text-neutral-400 border-t border-dashed border-gray-300 dark:border-neutral-700 pt-3"><span>Per-Day Rate</span><span className="font-bold text-gray-900 dark:text-white">₹{breakdownModal.math.perDay.toFixed(2)}</span></div>
+                  <div className="flex justify-between text-gray-700 dark:text-neutral-300 pt-3"><span>Total Duty</span><span className="font-bold text-emerald-700">{breakdownModal.math.totalDuty}</span></div>
+                  <div className="flex justify-between text-gray-700 dark:text-neutral-300"><span>Paid Leaves <span className="text-[10px] text-gray-500">(Cap {breakdownModal.math.leaveCap})</span></span><span className="font-bold text-blue-600">+{breakdownModal.math.paidLeaves}</span></div>
+                  <div className="flex justify-between font-bold text-gray-900 dark:text-neutral-200 border-t border-dashed border-gray-300 dark:border-neutral-700 pt-3"><span>Paid Duty</span><span>{breakdownModal.math.paidDuty}</span></div>
+                  <div className="flex justify-between font-bold text-gray-900 dark:text-neutral-200"><span>Gross Earned</span><span>₹{parseFloat(breakdownModal.math.gross).toLocaleString("en-IN")}</span></div>
+                  
+                  {breakdownModal.math.bonus > 0 && <div className="flex justify-between text-emerald-600 font-bold pt-3 border-t border-dashed border-gray-300 dark:border-neutral-700"><span>Bonuses</span><span>+₹{breakdownModal.math.bonus.toFixed(0)}</span></div>}
+                  {breakdownModal.math.totalAdvance > 0 && <div className="flex justify-between text-orange-600 font-bold"><span>Advances (Pending)</span><span>−₹{breakdownModal.math.totalAdvance.toFixed(0)}</span></div>}
+                  {breakdownModal.math.deduction > 0 && <div className="flex justify-between text-red-600 font-bold"><span>Fines & Deductions</span><span>−₹{breakdownModal.math.deduction.toFixed(0)}</span></div>}
+                  
+                  {breakdownModal.math.surplusCredit > 0 && <div className="flex justify-between text-blue-600 font-bold pt-3 border-t border-dashed border-gray-300 dark:border-neutral-700"><span>Previous Underpayment Credit</span><span>+₹{breakdownModal.math.surplusCredit.toFixed(0)}</span></div>}
+                  {breakdownModal.math.overpaymentDebt > 0 && <div className="flex justify-between text-orange-600 font-bold pt-3 border-t border-dashed border-gray-300 dark:border-neutral-700"><span>Previous Overpayment Debt</span><span>−₹{breakdownModal.math.overpaymentDebt.toFixed(0)}</span></div>}
+                </div>
+
+                <div className={`flex justify-between items-center px-5 py-4 rounded-2xl border mt-6 ${breakdownModal.math.isNegative ? 'bg-red-50 dark:bg-red-500/10 border-red-300 dark:border-red-900/60' : 'bg-emerald-50 dark:bg-emerald-500/10 border-emerald-300 dark:border-emerald-900/60'}`}>
+                  <span className={`text-xs font-black uppercase tracking-widest ${breakdownModal.math.isNegative ? 'text-red-700 dark:text-red-400' : 'text-emerald-800 dark:text-emerald-400'}`}>Net Payable</span>
+                  <span className={`font-mono font-black text-2xl ${breakdownModal.math.isNegative ? 'text-red-700 dark:text-red-400' : 'text-emerald-800 dark:text-emerald-400'}`}>
+                    {breakdownModal.math.isNegative ? `-₹${Math.abs(breakdownModal.math.theoreticalNet).toLocaleString("en-IN")}` : `₹${parseFloat(breakdownModal.math.salaryToPay).toLocaleString("en-IN")}`}
+                  </span>
+                </div>
               </div>
 
-              <div className="space-y-3 font-mono text-sm bg-gray-50 dark:bg-[#111] border border-gray-200 dark:border-neutral-700 p-5 rounded-2xl">
-                <div className="flex justify-between text-gray-600 dark:text-neutral-400"><span>Fixed Salary</span><span className="font-bold text-gray-900 dark:text-white">₹{breakdownModal.math.salary.toLocaleString("en-IN")}</span></div>
-                <div className="flex justify-between text-gray-600 dark:text-neutral-400"><span>Days in Month</span><span className="font-bold text-gray-900 dark:text-white">{breakdownModal.daysInMonth}</span></div>
-                <div className="flex justify-between text-gray-600 dark:text-neutral-400 border-t border-dashed border-gray-300 dark:border-neutral-700 pt-3"><span>Per-Day Rate</span><span className="font-bold text-gray-900 dark:text-white">₹{breakdownModal.math.perDay.toFixed(2)}</span></div>
-                <div className="flex justify-between text-gray-700 dark:text-neutral-300 pt-3"><span>Total Duty</span><span className="font-bold text-emerald-700">{breakdownModal.math.totalDuty}</span></div>
-                <div className="flex justify-between text-gray-700 dark:text-neutral-300"><span>Paid Leaves <span className="text-[10px] text-gray-500">(Cap {breakdownModal.math.leaveCap})</span></span><span className="font-bold text-blue-600">+{breakdownModal.math.paidLeaves}</span></div>
-                <div className="flex justify-between font-bold text-gray-900 dark:text-neutral-200 border-t border-dashed border-gray-300 dark:border-neutral-700 pt-3"><span>Paid Duty</span><span>{breakdownModal.math.paidDuty}</span></div>
-                <div className="flex justify-between font-bold text-gray-900 dark:text-neutral-200"><span>Gross Earned</span><span>₹{parseFloat(breakdownModal.math.gross).toLocaleString("en-IN")}</span></div>
-                
-                {breakdownModal.math.totalAdvance > 0 && <div className="flex justify-between text-orange-600 font-bold pt-3 border-t border-dashed border-gray-300 dark:border-neutral-700"><span>Advances (Pending)</span><span>−₹{breakdownModal.math.totalAdvance.toFixed(0)}</span></div>}
-                {breakdownModal.math.deduction > 0 && <div className="flex justify-between text-red-600 font-bold"><span>Fines & Deductions</span><span>−₹{breakdownModal.math.deduction.toFixed(0)}</span></div>}
-                {breakdownModal.math.surplusCredit > 0 && <div className="flex justify-between text-blue-600 font-bold pt-3 border-t border-dashed border-gray-300 dark:border-neutral-700"><span>Previous Underpayment Credit</span><span>+₹{breakdownModal.math.surplusCredit.toFixed(0)}</span></div>}
-                {breakdownModal.math.overpaymentDebt > 0 && <div className="flex justify-between text-orange-600 font-bold pt-3 border-t border-dashed border-gray-300 dark:border-neutral-700"><span>Previous Overpayment Debt</span><span>−₹{breakdownModal.math.overpaymentDebt.toFixed(0)}</span></div>}
-              </div>
-
-              <div className={`flex justify-between items-center px-5 py-4 rounded-2xl border ${breakdownModal.math.isNegative ? 'bg-red-50 dark:bg-red-500/10 border-red-300 dark:border-red-900/60' : 'bg-emerald-50 dark:bg-emerald-500/10 border-emerald-300 dark:border-emerald-900/60'}`}>
-                <span className={`text-xs font-black uppercase tracking-widest ${breakdownModal.math.isNegative ? 'text-red-700 dark:text-red-400' : 'text-emerald-800 dark:text-emerald-400'}`}>Net Payable</span>
-                <span className={`font-mono font-black text-2xl ${breakdownModal.math.isNegative ? 'text-red-700 dark:text-red-400' : 'text-emerald-800 dark:text-emerald-400'}`}>
-                  {breakdownModal.math.isNegative ? `-₹${Math.abs(breakdownModal.math.theoreticalNet).toLocaleString("en-IN")}` : `₹${parseFloat(breakdownModal.math.salaryToPay).toLocaleString("en-IN")}`}
-                </span>
-              </div>
+              {breakdownModal.math.pendingAssets.length > 0 && (
+                 <div className="border-t md:border-t-0 md:border-l border-gray-200 dark:border-neutral-800 pt-5 md:pt-0 md:pl-6">
+                    <h3 className="text-sm font-black flex items-center gap-2 text-purple-600"><Package size={16}/> Pending Extra Items</h3>
+                    <div className="space-y-3 mt-4">
+                      {breakdownModal.math.pendingAssets.map(asset => (
+                        <div key={asset.id} className="bg-purple-50 dark:bg-purple-900/10 border border-purple-200 dark:border-purple-900/30 p-4 rounded-xl flex flex-col justify-between">
+                          <div className="flex justify-between items-start mb-2">
+                             <div>
+                                <h4 className="font-black text-sm text-purple-900 dark:text-purple-100">{asset.item_name}</h4>
+                                <p className="font-mono text-xs font-bold text-purple-700 dark:text-purple-400">₹{parseFloat(asset.cost).toLocaleString("en-IN")}</p>
+                             </div>
+                             <span className="bg-purple-200 dark:bg-purple-800 text-purple-800 dark:text-purple-200 text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded">
+                               {getTimeSince(asset.created_at)}
+                             </span>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2 mt-2">
+                            <button onClick={() => handleResolveAsset(asset.id, 'waived', breakdownModal.staff.id)} disabled={assetSubmitting} className="py-2 bg-white dark:bg-black text-emerald-600 hover:bg-emerald-50 text-[10px] font-black uppercase tracking-widest border border-emerald-200 rounded-lg transition-colors">Waive Off</button>
+                            <button onClick={() => handleResolveAsset(asset.id, 'deducted', breakdownModal.staff.id)} disabled={assetSubmitting} className="py-2 bg-white dark:bg-black text-red-600 hover:bg-red-50 text-[10px] font-black uppercase tracking-widest border border-red-200 rounded-lg transition-colors">Deduct (Fine)</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                 </div>
+              )}
             </div>
           </div>
         </div>
@@ -818,7 +1043,7 @@ export default function GlobalPayrollEnginePage() {
       )}
 
       {/* ══════════════════════════════════════════════════════════════════
-          MODAL: POST-PAY ADJUSTMENT (NEW)
+          MODAL: POST-PAY ADJUSTMENT
       ══════════════════════════════════════════════════════════════════ */}
       {adjustModal && (
         <div className="fixed inset-0 bg-black/60 dark:bg-black/80 backdrop-blur-sm z-[100] flex items-end md:items-center justify-center sm:p-4">
@@ -832,7 +1057,6 @@ export default function GlobalPayrollEnginePage() {
               <button onClick={() => setAdjustModal(null)} className="p-2 bg-gray-200 dark:bg-neutral-800 rounded-full hover:bg-gray-300 transition-colors"><X size={16} /></button>
             </div>
 
-            {/* Existing adjustments */}
             <div className="p-5 border-b border-gray-100 dark:border-neutral-800 shrink-0">
               <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-3">Previous Adjustments</p>
               {adjustModal.loading ? (
@@ -861,53 +1085,25 @@ export default function GlobalPayrollEnginePage() {
               )}
             </div>
 
-            {/* New adjustment form */}
             <form onSubmit={handlePostPayAdjust} className="flex-1 overflow-y-auto custom-scrollbar p-5 space-y-4 pb-safe">
               <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest">New Adjustment</p>
               <div className="grid grid-cols-2 gap-3">
-                <button
-                  type="button"
-                  onClick={() => setAdjustForm(f => ({ ...f, adjustment_type: "credit" }))}
-                  className={`py-2.5 rounded-xl text-sm font-black transition-all ${adjustForm.adjustment_type === "credit" ? "bg-emerald-600 text-white shadow-md" : "bg-gray-100 dark:bg-neutral-800 text-gray-600 dark:text-neutral-400"}`}
-                >
+                <button type="button" onClick={() => setAdjustForm(f => ({ ...f, adjustment_type: "credit" }))} className={`py-2.5 rounded-xl text-sm font-black transition-all ${adjustForm.adjustment_type === "credit" ? "bg-emerald-600 text-white shadow-md" : "bg-gray-100 dark:bg-neutral-800 text-gray-600 dark:text-neutral-400"}`}>
                   + Credit
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setAdjustForm(f => ({ ...f, adjustment_type: "debit" }))}
-                  className={`py-2.5 rounded-xl text-sm font-black transition-all ${adjustForm.adjustment_type === "debit" ? "bg-red-600 text-white shadow-md" : "bg-gray-100 dark:bg-neutral-800 text-gray-600 dark:text-neutral-400"}`}
-                >
+                <button type="button" onClick={() => setAdjustForm(f => ({ ...f, adjustment_type: "debit" }))} className={`py-2.5 rounded-xl text-sm font-black transition-all ${adjustForm.adjustment_type === "debit" ? "bg-red-600 text-white shadow-md" : "bg-gray-100 dark:bg-neutral-800 text-gray-600 dark:text-neutral-400"}`}>
                   − Debit
                 </button>
               </div>
-              <input
-                type="number" step="0.01" min="0.01" required
-                value={adjustForm.amount}
-                onChange={e => setAdjustForm(f => ({ ...f, amount: e.target.value }))}
-                placeholder="Amount (₹)"
-                className="w-full px-4 py-3 rounded-2xl border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-[#111] text-sm font-black outline-none focus:ring-2 focus:ring-emerald-500 text-gray-900 dark:text-white"
-              />
-              <input
-                type="text" required
-                value={adjustForm.reason}
-                onChange={e => setAdjustForm(f => ({ ...f, reason: e.target.value }))}
-                placeholder="Reason for adjustment (required)"
-                className="w-full px-4 py-3 rounded-2xl border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-[#111] text-sm outline-none focus:ring-2 focus:ring-emerald-500 text-gray-900 dark:text-white"
-              />
-              <select
-                value={adjustForm.payment_mode}
-                onChange={e => setAdjustForm(f => ({ ...f, payment_mode: e.target.value }))}
-                className="w-full px-4 py-3 rounded-2xl border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-[#111] text-sm outline-none focus:ring-2 focus:ring-emerald-500 text-gray-900 dark:text-white"
-              >
+              <input type="number" step="0.01" min="0.01" required value={adjustForm.amount} onChange={e => setAdjustForm(f => ({ ...f, amount: e.target.value }))} placeholder="Amount (₹)" className="w-full px-4 py-3 rounded-2xl border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-[#111] text-sm font-black outline-none focus:ring-2 focus:ring-emerald-500 text-gray-900 dark:text-white" />
+              <input type="text" required value={adjustForm.reason} onChange={e => setAdjustForm(f => ({ ...f, reason: e.target.value }))} placeholder="Reason for adjustment (required)" className="w-full px-4 py-3 rounded-2xl border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-[#111] text-sm outline-none focus:ring-2 focus:ring-emerald-500 text-gray-900 dark:text-white" />
+              <select value={adjustForm.payment_mode} onChange={e => setAdjustForm(f => ({ ...f, payment_mode: e.target.value }))} className="w-full px-4 py-3 rounded-2xl border border-gray-200 dark:border-neutral-700 bg-gray-50 dark:bg-[#111] text-sm outline-none focus:ring-2 focus:ring-emerald-500 text-gray-900 dark:text-white">
                 <option value="Cash">Cash</option>
                 <option value="UPI">UPI</option>
                 <option value="Cheque">Cheque</option>
                 <option value="Other">Other</option>
               </select>
-              <button
-                type="submit" disabled={adjustSubmitting}
-                className="w-full py-3.5 bg-gray-900 dark:bg-white text-white dark:text-gray-900 rounded-2xl font-black text-sm disabled:opacity-50 active:scale-[0.98] transition-all"
-              >
+              <button type="submit" disabled={adjustSubmitting} className="w-full py-3.5 bg-gray-900 dark:bg-white text-white dark:text-gray-900 rounded-2xl font-black text-sm disabled:opacity-50 active:scale-[0.98] transition-all">
                 {adjustSubmitting ? "Saving..." : "Record Adjustment"}
               </button>
             </form>
@@ -984,6 +1180,155 @@ export default function GlobalPayrollEnginePage() {
             </div>
           </div>
         </>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════════
+          MODAL: LOG BONUS
+      ══════════════════════════════════════════════════════════════════ */}
+      {bonusModal && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[150] flex items-end md:items-center justify-center sm:p-4 shadow-[-10px_0_40px_rgba(0,0,0,0.2)]">
+          <div className="bg-white dark:bg-[#0a0a0a] border border-emerald-300 dark:border-emerald-900/70 w-full md:max-w-md rounded-t-3xl md:rounded-3xl shadow-2xl animate-in slide-in-from-bottom-full md:zoom-in-95 duration-200 flex flex-col">
+            <div className="p-4 md:p-5 border-b border-gray-200 dark:border-neutral-800 flex justify-between items-center bg-emerald-50/50 dark:bg-emerald-900/20 shrink-0">
+              <h2 className="text-base font-black flex items-center gap-2 text-emerald-700 dark:text-emerald-400">
+                <Gift size={18} /> Award Bonus
+              </h2>
+              <button onClick={() => setBonusModal(null)} className="p-2 bg-gray-200 dark:bg-neutral-800 rounded-full hover:bg-gray-300 transition-colors text-gray-700 dark:text-neutral-300"><X size={16} /></button>
+            </div>
+            
+            <form onSubmit={handleLogBonus} className="p-5 md:p-6 space-y-5 pb-safe">
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-gray-600 dark:text-neutral-400 uppercase tracking-widest pl-1">Bonus Amount</label>
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-black font-mono">₹</span>
+                  <input required type="number" step="0.01" min="1" value={bonusModal.amount} onChange={e => setBonusModal({...bonusModal, amount: e.target.value})} placeholder="0.00" className="w-full bg-emerald-50 dark:bg-emerald-900/10 border border-emerald-200 dark:border-emerald-900/30 rounded-2xl py-3.5 pl-8 pr-4 text-base font-black font-mono text-emerald-700 dark:text-emerald-400 outline-none focus:ring-2 focus:ring-emerald-500/50" />
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-gray-600 dark:text-neutral-400 uppercase tracking-widest pl-1">Reason for Bonus</label>
+                <textarea required value={bonusModal.remarks} onChange={e => setBonusModal({...bonusModal, remarks: e.target.value})} placeholder="e.g. Excellent performance this month..." className="w-full bg-gray-50 dark:bg-[#111] border border-gray-300 dark:border-neutral-700 rounded-2xl px-4 py-3 text-sm font-medium text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-emerald-500/50 resize-none h-20 custom-scrollbar" />
+              </div>
+              <button type="submit" disabled={bonusSubmitting} className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-black rounded-2xl flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/30 active:scale-[0.98] transition-all disabled:opacity-50">
+                {bonusSubmitting ? <Loader2 size={18} className="animate-spin" /> : <Gift size={18} strokeWidth={2.5} />} 
+                Add to this Month's Pay
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════════
+          MODAL: ASSET / EXTRA ITEM MANAGER
+      ══════════════════════════════════════════════════════════════════ */}
+      {assetModal && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[150] flex items-end md:items-center justify-center sm:p-4 shadow-[-10px_0_40px_rgba(0,0,0,0.2)]">
+          <div className="bg-white dark:bg-[#0a0a0a] border border-purple-300 dark:border-purple-900/70 w-full max-w-2xl max-h-[90dvh] md:max-h-[85vh] rounded-t-3xl md:rounded-3xl shadow-2xl animate-in slide-in-from-bottom-full md:zoom-in-95 duration-200 flex flex-col overflow-hidden">
+            
+            <div className="p-4 md:p-5 border-b border-gray-200 dark:border-neutral-800 flex justify-between items-center bg-purple-50/50 dark:bg-[#111] shrink-0">
+              <div>
+                <h2 className="text-base font-black flex items-center gap-2 text-purple-700 dark:text-purple-400">
+                  <Package size={18} /> Company Assets & Extras
+                </h2>
+                <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mt-1">{assetModal.user.name}</p>
+              </div>
+              <button onClick={() => setAssetModal(null)} className="p-2 bg-gray-200 dark:bg-neutral-800 rounded-full hover:bg-gray-300 transition-colors text-gray-700 dark:text-neutral-300"><X size={16} /></button>
+            </div>
+            
+            <div className="flex flex-col md:flex-row flex-1 min-h-0 overflow-hidden">
+              {/* Left: Active Assets List */}
+              <div className="w-full md:w-3/5 p-4 md:p-6 overflow-y-auto custom-scrollbar border-b md:border-b-0 md:border-r border-gray-200 dark:border-neutral-800 bg-gray-50 dark:bg-[#050505]">
+                <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-4">Assigned Assets</h3>
+                {assetModal.loading ? (
+                  <div className="flex justify-center py-10"><Loader2 className="animate-spin text-purple-500" size={24} /></div>
+                ) : assetModal.assets.length === 0 ? (
+                  <div className="text-center py-10 opacity-50">
+                     <Package size={32} className="mx-auto text-gray-400 mb-3" />
+                     <p className="text-sm font-bold text-gray-500">No items currently assigned.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {assetModal.assets.map(asset => (
+                      <div key={asset.id} className="bg-white dark:bg-[#111] border border-gray-200 dark:border-neutral-800 rounded-2xl p-4 shadow-sm">
+                        <div className="flex justify-between items-start mb-2">
+                          <p className="font-black text-sm text-gray-900 dark:text-white">{asset.item_name}</p>
+                          {asset.status === 'pending' ? (
+                            <span className="px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest bg-orange-100 text-orange-600 border border-orange-200">Pending</span>
+                          ) : asset.status === 'waived' ? (
+                            <span className="px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest bg-emerald-100 text-emerald-600 border border-emerald-200">Waived Off</span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest bg-red-100 text-red-600 border border-red-200">Deducted</span>
+                          )}
+                        </div>
+                        <p className="font-mono text-xs font-bold text-gray-500 mb-3">Cost: ₹{parseFloat(asset.cost).toLocaleString("en-IN")}</p>
+                        
+                        {asset.status === 'pending' && (
+                          <div className="grid grid-cols-2 gap-2 mt-4 pt-4 border-t border-gray-100 dark:border-neutral-800">
+                            <button onClick={() => handleResolveAsset(asset.id, 'waived', assetModal.user.id)} disabled={assetSubmitting} className="py-2 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 rounded-xl text-[10px] font-black uppercase tracking-widest border border-emerald-200 transition-colors disabled:opacity-50">
+                              Waive Off
+                            </button>
+                            <button onClick={() => handleResolveAsset(asset.id, 'deducted', assetModal.user.id)} disabled={assetSubmitting || assetModal.user.isPaid} title={assetModal.user.isPaid ? 'Salary already paid' : ''} className="py-2 bg-red-50 text-red-700 hover:bg-red-100 rounded-xl text-[10px] font-black uppercase tracking-widest border border-red-200 transition-colors disabled:opacity-50">
+                              Deduct Cost
+                            </button>
+                          </div>
+                        )}
+                        <div className="flex justify-between items-center mt-3">
+                           <p className="text-[9px] font-bold text-gray-400">Given: {new Date(asset.created_at).toLocaleDateString()}</p>
+                           <p className="text-[9px] font-black text-purple-600 uppercase tracking-widest">{getTimeSince(asset.created_at)}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Right: Assign New Form */}
+              <div className="w-full md:w-2/5 p-4 md:p-6 overflow-y-auto custom-scrollbar bg-white dark:bg-[#0a0a0a]">
+                <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-4">Assign New Item</h3>
+                <form onSubmit={handleAssignAsset} className="space-y-4">
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-gray-600 dark:text-neutral-400 uppercase tracking-widest pl-1">Select Item</label>
+                    <select
+                      required
+                      value={assetModal.assignForm.item_id}
+                      onChange={e => {
+                        const itm = globalInventory.find(i => String(i.id) === e.target.value);
+                        setAssetModal(prev => ({...prev, assignForm: {...prev.assignForm, item_id: e.target.value, cost: itm ? itm.default_cost : ""}}));
+                      }}
+                      className="w-full bg-gray-50 dark:bg-[#111] border border-gray-300 dark:border-neutral-700 rounded-xl px-4 py-3 text-sm font-bold text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-purple-500/50"
+                    >
+                      <option value="">-- Choose Item --</option>
+                      {globalInventory.map(inv => <option key={inv.id} value={inv.id}>{inv.item_name} (₹{inv.default_cost})</option>)}
+                    </select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-gray-600 dark:text-neutral-400 uppercase tracking-widest pl-1">Applicable Cost</label>
+                    <input required type="number" step="1" min="0" value={assetModal.assignForm.cost} onChange={e => setAssetModal(p => ({...p, assignForm: {...p.assignForm, cost: e.target.value}}))} placeholder="0.00" className="w-full bg-gray-50 dark:bg-[#111] border border-gray-300 dark:border-neutral-700 rounded-xl px-4 py-3 text-sm font-mono font-bold text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-purple-500/50" />
+                  </div>
+                  
+                  {/* NEW FIELD: Historical Assignment Date */}
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-gray-600 dark:text-neutral-400 uppercase tracking-widest pl-1">Date Given</label>
+                    <input 
+                      required 
+                      type="date" 
+                      value={assetModal.assignForm.assigned_date} 
+                      onChange={e => setAssetModal(p => ({...p, assignForm: {...p.assignForm, assigned_date: e.target.value}}))} 
+                      max={new Date().toISOString().split('T')[0]} 
+                      className="w-full bg-gray-50 dark:bg-[#111] border border-gray-300 dark:border-neutral-700 rounded-xl px-4 py-3 text-sm font-bold text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-purple-500/50" 
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-bold text-gray-600 dark:text-neutral-400 uppercase tracking-widest pl-1">Remarks</label>
+                    <textarea value={assetModal.assignForm.remarks} onChange={e => setAssetModal(p => ({...p, assignForm: {...p.assignForm, remarks: e.target.value}}))} placeholder="Optional notes..." className="w-full bg-gray-50 dark:bg-[#111] border border-gray-300 dark:border-neutral-700 rounded-xl px-4 py-3 text-sm font-medium text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-purple-500/50 resize-none h-16" />
+                  </div>
+                  <button type="submit" disabled={assetSubmitting || !assetModal.assignForm.item_id} className="w-full py-3 bg-purple-600 hover:bg-purple-700 text-white text-xs font-black uppercase tracking-widest rounded-xl transition-all shadow-md active:scale-95 disabled:opacity-50 mt-2">
+                    {assetSubmitting ? "Assigning..." : "Assign Item"}
+                  </button>
+                </form>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
     </div>

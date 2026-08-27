@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { callApi } from "@/lib/apiClient";
 import {
   CalendarDays, Loader2, Edit2, X, Check, Search, 
-  ChevronDown, Building2, Calendar, CheckCircle2, XCircle, Clock, Activity, Coffee, History, XCircle2
+  ChevronDown, Building2, Calendar, CheckCircle2, XCircle, Clock, Activity, Coffee, History, XCircle2, canEdit
 } from "lucide-react";
 
 // ─── HELPERS ───────────────────────────────────────────────────────────────
@@ -16,8 +16,17 @@ const getLocalDate = () => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 
+const formatDuration = (minutes) => {
+  if (!minutes || minutes <= 0) return "0h 0m";
+  const h = Math.floor(minutes / 60);
+  const m = Math.floor(minutes % 60);
+  return `${h > 0 ? `${h}h ` : ''}${m}m`;
+};
+
+const formatTimeOnly = (iso) => iso ? new Date(iso).toLocaleTimeString("en-IN", { hour: '2-digit', minute: '2-digit', hour12: true }) : "—";
+
 function calcPaidHolidays(daysPresent, cap) {
-  if (cap === 0) return 0; // FIXED
+  if (cap === 0) return 0;
   if (cap >= 4) {
     if (daysPresent >= 24) return 4;
     if (daysPresent >= 20) return 3;
@@ -37,7 +46,7 @@ function AttendanceMarker({ status, dayData }) {
     P:  { label: "F",  bg: "bg-emerald-100 dark:bg-emerald-500/20", text: "text-emerald-700 dark:text-emerald-400" },
     H:  { label: "H",  bg: "bg-yellow-100 dark:bg-yellow-500/20",   text: "text-yellow-700 dark:text-yellow-400" },
     A:  { label: "A",  bg: "bg-red-100 dark:bg-red-500/20",         text: "text-red-700 dark:text-red-400" },
-    M:  { label: "A",  bg: "bg-red-100 dark:bg-red-500/20",         text: "text-red-700 dark:text-red-400" }, // Maps missing to Absent visually
+    M:  { label: "A",  bg: "bg-red-100 dark:bg-red-500/20",         text: "text-red-700 dark:text-red-400" }, 
     L:  { label: "L",  bg: "bg-blue-100 dark:bg-blue-500/20",       text: "text-blue-700 dark:text-blue-400" },
     PH: { label: "★",  bg: "bg-purple-100 dark:bg-purple-500/20",   text: "text-purple-700 dark:text-purple-400" },
     "-":{ label: "–",  bg: "bg-transparent",                        text: "text-gray-300 dark:text-neutral-700" },
@@ -45,7 +54,6 @@ function AttendanceMarker({ status, dayData }) {
   
   const m = map[status] || map["-"];
   
-  // ROBUST FIX: Detect odd punches strictly for the warning dot, without altering the backend's valid status calculation
   const hasOddPunches = dayData?.punches?.length > 0 && dayData.punches.length % 2 !== 0;
   const isOverride = dayData?.override;
   const showPartialWarning = hasOddPunches && !isOverride;
@@ -103,7 +111,7 @@ function DailyPunchSummary({ dayData, date }) {
 
   return (
     <div className="space-y-5">
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <div className="bg-gray-50 dark:bg-[#111] p-3 rounded-xl border border-gray-200 dark:border-neutral-800">
           <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1 pl-0.5">First In</p>
           <p className="font-mono font-black text-sm text-gray-900 dark:text-white">{formatTime(dayData.first_in)}</p>
@@ -286,6 +294,9 @@ function AttendanceLedgerContent() {
     );
   }
 
+  // Safe Check
+  const canEdit = session ? true : false; 
+
   return (
     <div className="flex flex-col gap-5 md:gap-8 animate-in fade-in duration-500 pb-24 text-gray-900 dark:text-neutral-200 w-full min-w-0 max-w-full">
       
@@ -294,7 +305,7 @@ function AttendanceLedgerContent() {
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-blue-600 dark:text-blue-500 mb-1">
             <CalendarDays size={14} className="shrink-0" />
-            <span className="text-[10px] font-black tracking-[0.2em] uppercase">Time & Tracking</span>
+            <span className="text-[10px] md:text-xs font-black tracking-[0.2em] uppercase truncate">Time & Tracking</span>
           </div>
           <h1 className="text-2xl md:text-3xl font-black text-gray-900 dark:text-white tracking-tight">
             Attendance Ledger
@@ -306,7 +317,7 @@ function AttendanceLedgerContent() {
           </p>
         </div>
 
-        {/* Tab Switcher — full width on mobile, auto width on desktop */}
+        {/* Tab Switcher */}
         <div className="flex items-center bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-2xl p-1.5 shadow-sm w-full md:w-auto md:shrink-0">
           <button
             onClick={() => setActiveTab("ledger")}
@@ -332,7 +343,7 @@ function AttendanceLedgerContent() {
       {activeTab === "ledger" && (
         <div className="flex flex-col gap-5 animate-in slide-in-from-bottom-4 w-full min-w-0 max-w-full">
 
-          {/* Filter Bar — full width on mobile, compact w-fit on desktop */}
+          {/* Filter Bar */}
           <div className="flex flex-wrap gap-2 items-center bg-white dark:bg-[#0a0a0a] p-2.5 rounded-2xl border border-gray-200 dark:border-neutral-800 shadow-sm w-full md:w-fit md:mx-1">
             <div className="flex items-center gap-2 bg-gray-50 dark:bg-neutral-900 rounded-xl px-3 py-2 flex-1 md:flex-none">
               <Calendar size={14} className="text-blue-500 shrink-0" />
@@ -407,17 +418,17 @@ function AttendanceLedgerContent() {
                 <div className="absolute inset-0 w-full overflow-auto custom-scrollbar pb-2">
                   <table
                     className="w-full text-left border-collapse"
-                    style={{ minWidth: `${140 + daysInMonth * 40}px` }}
+                    style={{ minWidth: `${200 + daysInMonth * 40}px` }}
                   >
                     <thead>
                       <tr className="bg-gray-50/80 dark:bg-[#050505] border-b border-gray-300 dark:border-neutral-700">
-                        <th className="p-3 md:p-4 text-[10px] font-black text-gray-400 uppercase tracking-widest sticky left-0 bg-gray-50/95 dark:bg-[#050505]/95 backdrop-blur-sm z-20 border-r border-gray-300 dark:border-neutral-700 shadow-[2px_0_8px_rgba(0,0,0,0.05)]">
+                        <th className="p-3 md:p-4 text-[10px] font-black text-gray-400 uppercase tracking-widest sticky left-0 bg-gray-50/95 dark:bg-[#050505]/95 backdrop-blur-sm z-30 border-r border-gray-300 dark:border-neutral-700 shadow-[2px_0_8px_rgba(0,0,0,0.05)]">
                           Personnel
                         </th>
                         {[...Array(daysInMonth)].map((_, i) => {
                           const d = new Date(finYear, finMonth - 1, i + 1);
                           return (
-                            <th key={i} className="p-1 text-center min-w-[40px] border-r border-gray-300 dark:border-neutral-700">
+                            <th key={i} className="p-1 text-center min-w-[40px] border-r border-gray-300 dark:border-neutral-700 z-20">
                               <div className="text-[8px] font-black uppercase mb-0.5 text-gray-400">
                                 {d.toLocaleDateString("en-IN", { weekday: "short" }).charAt(0)}
                               </div>
@@ -426,17 +437,21 @@ function AttendanceLedgerContent() {
                           );
                         })}
                         {["F", "H", "A", "L"].map(h => (
-                          <th key={h} className="p-2 text-center text-[9px] font-black text-gray-400 uppercase min-w-[30px] border-r border-gray-300 dark:border-neutral-700">{h}</th>
+                          <th key={h} className="p-2 text-center text-[9px] font-black text-gray-400 uppercase min-w-[30px] border-r border-gray-300 dark:border-neutral-700 z-20">{h}</th>
                         ))}
-                        <th className="p-2 text-center text-[9px] font-black text-emerald-600 uppercase min-w-[50px] bg-emerald-50/30 dark:bg-emerald-900/10 border-l border-emerald-300 dark:border-emerald-700/50">
+                        <th className="p-2 text-center text-[9px] font-black text-emerald-600 uppercase min-w-[50px] bg-emerald-50/30 dark:bg-emerald-900/10 border-l border-emerald-300 dark:border-emerald-700/50 z-20">
                           Earned<br/>Leaves
+                        </th>
+                        <th className="p-2 text-center text-[9px] font-black text-blue-600 uppercase min-w-[60px] bg-blue-50/30 dark:bg-blue-900/10 border-l border-blue-300 dark:border-blue-700/50 z-20">
+                          Total<br/>Hours
                         </th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-300 dark:divide-neutral-700">
                       {attendanceGrid.map((row, idx) => {
-                        let totF = 0, totH = 0, totA = 0, totL = 0;
+                        let totF = 0, totH = 0, totA = 0, totL = 0, totMins = 0;
                         const todayStr = getLocalDate();
+                        const targetHours = row.standard_shift_hours || 10;
                         
                         return (
                           <tr key={idx} className="hover:bg-gray-50/50 dark:hover:bg-neutral-900/30 group">
@@ -449,11 +464,9 @@ function AttendanceLedgerContent() {
                               
                               let rawStatus = dayData?.status || "-";
                               
-                              // Treat backend's 'M' (Missing punch out) as 'A'
                               if (rawStatus === "M") rawStatus = "A";
 
-                              // Blank out future dates ONLY if they aren't explicitly overridden
-                              if (dateStr > todayStr && !dayData?.override) {
+                              if (status !== "-" && dateStr > todayStr && !dayData?.override) {
                                 rawStatus = "-";
                               }
 
@@ -465,18 +478,54 @@ function AttendanceLedgerContent() {
                               else if (mathStatus === "A") { totA++; }
                               else if (mathStatus === "L") { totL++; }
 
+                              if (dayData && dayData.minutes) {
+                                totMins += parseInt(dayData.minutes);
+                              }
+
                               return (
                                 <td
                                   key={i}
                                   onClick={() => {
+                                    if (!canEdit) return; 
                                     setOverrideTarget({ user: row, date: dateStr, dayData });
                                     const modalDefault = (mathStatus !== "-" && mathStatus !== "A" && mathStatus !== "P") ? mathStatus : "F";
                                     setOverrideForm({ status: modalDefault, reason: "" });
                                     fetchOverrideHistory(row.id, dateStr);
                                   }}
-                                  className="p-1 text-center border-r border-gray-300 dark:border-neutral-700 transition-colors cursor-pointer hover:bg-blue-50 dark:hover:bg-blue-900/20 min-w-[40px]"
+                                  className={`relative group/cell hover:z-[99] p-1 text-center border-r border-gray-300 dark:border-neutral-700 transition-colors ${canEdit ? 'cursor-pointer hover:bg-blue-50 dark:hover:bg-blue-900/20' : 'cursor-default'} min-w-[40px]`}
                                 >
                                   <AttendanceMarker status={rawStatus === "P" ? "F" : rawStatus} dayData={dayData} />
+                                  
+                                  {/* INSTANT HOVER TOOLTIP */}
+                                  <div className={`absolute left-1/2 -translate-x-1/2 w-48 bg-gray-900/95 backdrop-blur-md dark:bg-white/95 rounded-2xl shadow-2xl p-3.5 opacity-0 invisible group-hover/cell:opacity-100 group-hover/cell:visible transition-all duration-200 z-[100] pointer-events-none scale-95 group-hover/cell:scale-100 ${idx < 4 ? 'top-[130%]' : 'bottom-[130%]'}`}>
+                                    <div className={`absolute left-1/2 -translate-x-1/2 w-3 h-3 bg-gray-900/95 dark:bg-white/95 rotate-45 ${idx < 4 ? '-top-1.5 border-l border-t border-transparent dark:border-gray-200' : '-bottom-1.5 border-r border-b border-transparent dark:border-gray-200'}`}></div>
+                                    <div className="relative z-10 flex flex-col items-center">
+                                      
+                                      {dayData?.override ? (
+                                        <div className="mb-2 w-full text-center bg-blue-500/20 text-blue-300 dark:text-blue-600 rounded px-1 py-0.5 text-[9px] font-black uppercase">Admin Override: {dayData.status}</div>
+                                      ) : null}
+
+                                      <div className="flex justify-between w-full items-center mb-1">
+                                        <p className="text-[9px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">Working Time</p>
+                                        <p className="text-[9px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest">Target: {targetHours}h</p>
+                                      </div>
+                                      
+                                      <p className={`font-mono font-black text-2xl leading-none mb-3 tracking-tight ${dayData?.minutes ? 'text-white dark:text-gray-900' : 'text-gray-500 dark:text-gray-400'}`}>
+                                        {formatDuration(dayData?.minutes || 0)}
+                                      </p>
+                                      
+                                      <div className="w-full flex justify-between items-center text-[10px] font-mono border-t border-gray-700 dark:border-gray-200 pt-2.5 mt-0.5">
+                                        <div className="flex flex-col items-start">
+                                          <span className="text-emerald-400 dark:text-emerald-600 font-bold mb-0.5 text-[8px]">FIRST IN</span>
+                                          <span className="text-gray-300 dark:text-gray-600 font-bold tracking-tight">{formatTimeOnly(dayData?.first_in)}</span>
+                                        </div>
+                                        <div className="flex flex-col items-end">
+                                          <span className="text-orange-400 dark:text-orange-600 font-bold mb-0.5 text-[8px]">LAST OUT</span>
+                                          <span className="text-gray-300 dark:text-gray-600 font-bold tracking-tight">{formatTimeOnly(dayData?.last_out)}</span>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </div>
                                 </td>
                               );
                             })}
@@ -486,6 +535,9 @@ function AttendanceLedgerContent() {
                             <td className="p-2 text-center font-mono font-black text-xs text-blue-500 border-r border-gray-300 dark:border-neutral-700">{totL}</td>
                             <td className="p-2 text-center font-mono font-black text-xs text-emerald-600 bg-emerald-50/30 dark:bg-emerald-900/10 border-l border-emerald-300 dark:border-emerald-700/50">
                               {calcPaidHolidays(totF + (totH * 0.5), row.max_paid_leaves_cap ?? row.max_paid_leaves ?? 4)}
+                            </td>
+                            <td className="p-2 text-center font-mono font-black text-xs text-blue-600 bg-blue-50/30 dark:bg-blue-900/10 border-l border-blue-300 dark:border-blue-700/50">
+                              {formatDuration(totMins)}
                             </td>
                           </tr>
                         );
@@ -557,7 +609,7 @@ function AttendanceLedgerContent() {
                       </div>
                     </div>
 
-                    {req.status === 'pending' && (
+                    {req.status === 'pending' && canEdit && (
                       <div className="flex gap-3 pt-2">
                         <button
                           onClick={() => { setLeaveActionModal({ req, action: 'rejected' }); setLeaveRemark(''); }}
@@ -592,11 +644,10 @@ function AttendanceLedgerContent() {
           MODAL: OVERRIDE — slides up from bottom on mobile
       ══════════════════════════════════════════════════════ */}
       {overrideTarget && (
-        <div className="fixed inset-0 bg-black/60 dark:bg-black/80 backdrop-blur-sm z-[150] flex items-end md:items-center justify-center md:p-4">
-          <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 w-full max-w-xl max-h-[92vh] md:max-h-[90vh] rounded-t-3xl md:rounded-3xl shadow-2xl animate-in slide-in-from-bottom-full md:zoom-in-95 duration-200 flex flex-col overflow-hidden">
+        <div className="fixed inset-y-0 right-0 left-0 md:left-72 bg-black/60 dark:bg-black/80 backdrop-blur-sm z-[150] flex items-center justify-center p-4 shadow-[-10px_0_40px_rgba(0,0,0,0.2)]">
+          <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 w-full max-w-xl max-h-[92vh] md:max-h-[90vh] rounded-t-3xl md:rounded-3xl shadow-2xl animate-in zoom-in-95 duration-200 flex flex-col overflow-hidden">
 
             <div className="p-4 md:p-5 border-b border-gray-100 dark:border-neutral-900 flex justify-between items-center bg-gray-50/50 dark:bg-[#111] shrink-0">
-              {/* Drag handle for mobile sheet */}
               <div className="absolute top-2.5 left-1/2 -translate-x-1/2 w-10 h-1 bg-gray-300 dark:bg-neutral-700 rounded-full md:hidden"></div>
               <h2 className="text-base font-black flex items-center gap-2 text-gray-900 dark:text-white mt-2 md:mt-0">
                 <Edit2 size={18} className="text-blue-500 shrink-0" /> Override Status

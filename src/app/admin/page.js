@@ -28,13 +28,15 @@ const LOG_MAP = {
 };
 
 const TYPE_MAP = {
-  pre_advance:    { label: "Pre-Advance",    color: "text-orange-600 dark:text-orange-400", bg: "bg-orange-50 dark:bg-orange-500/10",  icon: ArrowDownRight },
-  final_advance:  { label: "Final Advance",  color: "text-orange-600 dark:text-orange-400", bg: "bg-orange-50 dark:bg-orange-500/10",  icon: ArrowDownRight },
-  shop_advance:   { label: "Shop Adv",       color: "text-amber-600 dark:text-amber-400",   bg: "bg-amber-50 dark:bg-amber-500/10",    icon: ArrowDownRight },
-  shop_bill:      { label: "Shop Bill",      color: "text-amber-600 dark:text-amber-400",   bg: "bg-amber-50 dark:bg-amber-500/10",    icon: FileText },
-  fine:           { label: "Fine/Penalty",   color: "text-red-600 dark:text-red-400",       bg: "bg-red-50 dark:bg-red-500/10",        icon: AlertTriangle },
-  other:          { label: "Other",          color: "text-gray-600 dark:text-gray-400",     bg: "bg-gray-100 dark:bg-gray-800",        icon: Banknote },
+  pre_advance:   { label: "Advance",         color: "text-orange-600 dark:text-orange-400", bg: "bg-orange-50 dark:bg-orange-500/10",  icon: ArrowDownRight },
+  final_advance: { label: "Advance (Old)",   color: "text-orange-600 dark:text-orange-400", bg: "bg-orange-50 dark:bg-orange-500/10",  icon: ArrowDownRight },
+  shop_advance:  { label: "Shop Adv (Old)",  color: "text-orange-600 dark:text-orange-400", bg: "bg-orange-50 dark:bg-orange-500/10",  icon: ArrowDownRight },
+  shop_bill:     { label: "Shop Bill",       color: "text-amber-600 dark:text-amber-400",   bg: "bg-amber-50 dark:bg-amber-500/10",   icon: FileText },
+  fine:          { label: "Fine/Penalty",    color: "text-red-600 dark:text-red-400",       bg: "bg-red-50 dark:bg-red-500/10",       icon: AlertTriangle },
+  other:         { label: "Other",           color: "text-gray-600 dark:text-gray-400",     bg: "bg-gray-100 dark:bg-gray-800",       icon: Banknote },
 };
+
+const ACTIVE_LOG_TYPES = ["pre_advance", "shop_bill", "fine", "other"];
 
 // ─── HELPERS ───────────────────────────────────────────────────────────────
 function formatLogGroupDate(isoString) {
@@ -126,6 +128,7 @@ function DashboardContent() {
   const [formType, setFormType] = useState("pre_advance");
   const [formAmount, setFormAmount] = useState("");
   const [formRemarks, setFormRemarks] = useState("");
+  const [formPaymentMode, setFormPaymentMode] = useState("Cash");
   const [formSubmitting, setFormSubmitting] = useState(false);
 
   useEffect(() => {
@@ -311,80 +314,102 @@ function DashboardContent() {
   }, [users, globalSearchQuery, branches, dashboardBranchFilter]);
 
   const openUserFinanceModal = async (u) => {
-     setSearchModalOpen(false);
-     setGlobalSearchQuery("");
-     setActiveUserModal({ ...u, loading: true });
-     setFormType("pre_advance");
-
-     const m = now.getMonth() + 1;
-     const y = now.getFullYear();
-
-     const [finRes, attRes] = await Promise.all([
-        callApi("get_branch_financial_ledger", { branch_id: u.branch_id, month: m, year: y }),
-        callApi("get_monthly_attendance", { branch_id: u.branch_id, month: m, year: y })
-     ]);
-
-     const ledgerData = finRes.data || [];
-     const attendanceData = attRes.data || [];
-
-     const userTxns = ledgerData.filter(l => String(l.user_id) === String(u.id));
-     const balances = { pre_advance: 0, final_advance: 0, shop_advance: 0, shop_bill: 0, fine: 0, other: 0, total_deduction: 0 };
-
-     userTxns.forEach(txn => {
-        const amt = parseFloat(txn.amount || 0);
-        if (balances[txn.type] !== undefined) balances[txn.type] += amt;
-        balances.total_deduction += amt;
-     });
-
-     const daysInMonth = new Date(y, m, 0).getDate();
-     const userAtt = attendanceData.find(a => String(a.id) === String(u.id));
-     const daysWorked = parseFloat(userAtt?.total_duty || userAtt?.days_worked || userAtt?.present || 0);
-     const leaveCap = parseInt(u.max_paid_leaves_cap || u.max_paid_leaves || 4);
-     const paidLeaves = calcPaidLeaves(daysWorked, leaveCap);
-     const totalPaidDays = Math.min(daysInMonth, daysWorked + paidLeaves);
-
-     const fixedSalary = parseFloat(u.monthly_fixed_salary || u.salary || 0);
-     const perDayRate = daysInMonth > 0 ? fixedSalary / daysInMonth : 0;
-      
-     const grossEarned = perDayRate * totalPaidDays;
-     const staticDeductions = balances.shop_bill + balances.fine + balances.other;
-     const netPayable = Math.max(0, grossEarned - staticDeductions);
-
-     const maxAdv = netPayable * 0.30;
-     const takenAdv = balances.pre_advance + balances.final_advance + balances.shop_advance;
-     const availAdv = Math.max(0, maxAdv - takenAdv);
-
-     setActiveUserModal({
-         ...u,
-         txns: userTxns,
-         balances,
-         fixedSalary,
-         netPayable,
-         maxAdv,
-         takenAdv,
-         availAdv,
-         loading: false
-     });
-  };
-
-  const handleLogTransaction = async (e) => {
-    e.preventDefault();
-    if (!formAmount || parseFloat(formAmount) <= 0 || !formRemarks.trim()) return alert("Fill all required fields.");
+    setSearchModalOpen(false);
+    setGlobalSearchQuery("");
+    setActiveUserModal({ ...u, loading: true });
+    setFormType("pre_advance");
+    setFormPaymentMode("Cash");
     
-    setFormSubmitting(true);
-    const res = await callApi("log_advance", {
-      user_id: activeUserModal.id, branch_id: activeUserModal.branch_id, type: formType,
-      amount: parseFloat(formAmount), remarks: formRemarks,
-      month: now.getMonth() + 1, year: now.getFullYear(), admin_id: session?.id
-    });
-    setFormSubmitting(false);
+    const m = now.getMonth() + 1;
+    const y = now.getFullYear();
 
-    if (res.status === "success") {
-      setFormAmount(""); setFormRemarks("");
-      openUserFinanceModal(activeUserModal);
-      fetchFeed();
-    } else { alert(res.message || "Failed to log transaction."); }
-  };
+    const [finRes, attRes] = await Promise.all([
+       callApi("get_branch_financial_ledger", { branch_id: u.branch_id, month: m, year: y }),
+       callApi("get_monthly_attendance", { branch_id: u.branch_id, month: m, year: y })
+    ]);
+
+    const ledgerData = finRes.data || [];
+    const attendanceData = attRes.data || [];
+
+    const userTxns = ledgerData.filter(l => String(l.user_id) === String(u.id));
+    const balances = { advance: 0, shop_bill: 0, fine: 0, other: 0, total_deduction: 0 };
+    
+    userTxns.forEach(txn => {
+       const amt = parseFloat(txn.amount || 0);
+       if (['pre_advance', 'final_advance', 'shop_advance'].includes(txn.type)) {
+           balances.advance += amt;
+       } else if (balances[txn.type] !== undefined) {
+           balances[txn.type] += amt;
+       }
+       balances.total_deduction += amt;
+    });
+
+    const daysInMonth = new Date(y, m, 0).getDate();
+    const userAtt = attendanceData.find(a => String(a.id) === String(u.id));
+    const isPaid = userAtt?.ledger_status === 'paid' || userAtt?.status === 'paid';
+    
+    const daysWorked = parseFloat(userAtt?.total_duty || userAtt?.days_worked || userAtt?.present || 0);
+    const leaveCap = parseInt(u.max_paid_leaves_cap || u.max_paid_leaves || 4);
+    const paidLeaves = calcPaidLeaves(daysWorked, leaveCap);
+    const totalPaidDays = Math.min(daysInMonth, daysWorked + paidLeaves);
+    
+    const fixedSalary = parseFloat(u.monthly_fixed_salary || u.salary || 0);
+    const perDayRate = daysInMonth > 0 ? fixedSalary / daysInMonth : 0;
+    const grossEarned = perDayRate * totalPaidDays;
+    
+    const staticDeductions = balances.shop_bill + balances.fine + balances.other;
+    const netPayable = Math.max(0, grossEarned - staticDeductions);
+    const maxAdv = netPayable * 0.30;
+    const availAdv = Math.max(0, maxAdv - balances.advance);
+
+    setActiveUserModal({
+        ...u, 
+        txns: userTxns, 
+        balances, 
+        fixedSalary, 
+        grossEarned,
+        netPayable, 
+        maxAdv, 
+        takenAdv: balances.advance, 
+        availAdv, 
+        isPaid,
+        loading: false
+    });
+ };
+
+ const handleLogTransaction = async (e) => {
+  e.preventDefault();
+  if (!formAmount || parseFloat(formAmount) <= 0 || !formRemarks.trim()) return alert("Fill all required fields.");
+  
+  setFormSubmitting(true);
+  
+  const isExceedingLimit = parseFloat(formAmount || 0) > (activeUserModal?.availAdv || 0) && ['pre_advance', 'final_advance', 'shop_advance'].includes(formType);
+  const endpoint = isExceedingLimit ? "request_advance" : "log_advance";
+
+  const res = await callApi(endpoint, {
+    user_id: activeUserModal.id, 
+    branch_id: activeUserModal.branch_id, 
+    manager_id: session?.id, 
+    actor_id: session?.id,
+    type: formType, 
+    amount: parseFloat(formAmount), 
+    remarks: formRemarks, 
+    payment_mode: formPaymentMode,
+    month: new Date().getMonth() + 1, 
+    year: new Date().getFullYear()
+  });
+  
+  setFormSubmitting(false);
+  
+  if (res.status === "success") {
+    setFormAmount(""); setFormRemarks("");
+    openUserFinanceModal(activeUserModal);
+    fetchDashboardAndLive();
+    fetchFeed();
+  } else {
+    alert(res.message || "Failed to log transaction.");
+  }
+};
 
   const handleVoidRecord = async (record_id) => {
     if (!confirm("Void this transaction?")) return;
@@ -825,56 +850,71 @@ function DashboardContent() {
               <div className="flex flex-col md:flex-row flex-1 overflow-hidden min-h-0">
                 
                 {/* LEFT: LOG FORM */}
-                <div className="w-full md:w-1/2 border-b md:border-b-0 md:border-r border-gray-100 dark:border-neutral-900 p-4 md:p-6 overflow-y-auto custom-scrollbar bg-white dark:bg-[#0a0a0a] max-h-[45vh] md:max-h-none">
+                <div className="w-full md:w-1/2 border-b md:border-b-0 border-r border-gray-100 dark:border-neutral-900 p-4 md:p-6 overflow-y-auto custom-scrollbar bg-white dark:bg-[#0a0a0a] max-h-[45vh] md:max-h-none">
                   
+                  {activeUserModal.isPaid && (
+                     <div className="mb-6 p-4 bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-900/50 rounded-xl flex items-start gap-3">
+                       <CheckCircle2 className="text-emerald-500 mt-0.5" size={20}/>
+                       <div>
+                          <p className="text-sm font-black text-emerald-700 dark:text-emerald-400 uppercase">Salary Locked & Paid</p>
+                          <p className="text-xs font-bold text-emerald-600/80 dark:text-emerald-400/80 mt-1 leading-snug">The financial ledger for {new Date(0, new Date().getMonth()).toLocaleString('en-IN', {month:'long'})} is permanently locked because the salary has been paid. Navigate to the Finance page to log records for next month.</p>
+                       </div>
+                     </div>
+                  )}
+
                   <div className="mb-5 p-4 bg-gray-50 dark:bg-[#111] rounded-2xl border border-gray-200 dark:border-neutral-800">
                     <div className="flex items-center justify-between mb-3">
                       <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest">30% Dynamic Limit</p>
                       <p className="font-mono text-xs font-black text-gray-900 dark:text-white">Max: {formatCurrency(activeUserModal.maxAdv)}</p>
                     </div>
-                    
                     <div className="w-full h-2.5 bg-gray-200 dark:bg-neutral-800 rounded-full overflow-hidden flex mb-2">
-                      <div
-                        style={{ width: `${Math.min((activeUserModal.takenAdv / activeUserModal.maxAdv) * 100, 100)}%` }}
-                        className="h-full bg-orange-500 transition-all"
-                      ></div>
+                      <div style={{ width: `${Math.min((activeUserModal.takenAdv / activeUserModal.maxAdv) * 100, 100)}%` }} className="h-full bg-orange-500 transition-all"></div>
                     </div>
-                    
                     <div className="flex justify-between items-center text-[10px] font-bold">
                       <span className="text-orange-600 dark:text-orange-400">Consumed: {formatCurrency(activeUserModal.takenAdv)}</span>
                       <span className="text-emerald-600 dark:text-emerald-400">Available: {formatCurrency(activeUserModal.availAdv)}</span>
                     </div>
-                    
                     <div className="mt-3 pt-3 border-t border-gray-200 dark:border-neutral-800 flex justify-between items-center">
-                      <p className="text-[9px] font-bold text-gray-400">Net Earned: <span className="text-gray-700 dark:text-neutral-300 font-mono">{formatCurrency(activeUserModal.netPayable)}</span></p>
+                       <p className="text-[9px] font-bold text-gray-400">Net Earned: <span className="text-gray-700 dark:text-neutral-300 font-mono">{formatCurrency(activeUserModal.netPayable)}</span></p>
                     </div>
                   </div>
 
-                  {['pre_advance', 'final_advance', 'shop_advance'].includes(formType) && parseFloat(formAmount || 0) > activeUserModal.availAdv && (
+                  {!activeUserModal.isPaid && ['pre_advance', 'final_advance', 'shop_advance'].includes(formType) && parseFloat(formAmount || 0) > activeUserModal.availAdv && (
                     <div className="mb-5 p-3 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-900/50 rounded-xl flex items-start gap-2 animate-in fade-in zoom-in-95">
                       <Unlock size={14} className="text-red-500 mt-0.5 shrink-0" />
                       <div>
                         <p className="text-[10px] font-black text-red-700 dark:text-red-400 uppercase tracking-widest mb-0.5">Admin Override Active</p>
-                        <p className="text-[10px] font-bold text-red-600/80 dark:text-red-400/80 leading-snug">Exceeds 30% limit. Managers require approval, but as Admin you may proceed.</p>
+                        <p className="text-[10px] font-bold text-red-600/80 dark:text-red-400/80 leading-snug">Amount exceeds the 30% dynamic limit. As Admin, you may proceed directly.</p>
                       </div>
                     </div>
                   )}
 
-                  <form onSubmit={handleLogTransaction} className="space-y-4">
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-bold text-gray-500 dark:text-neutral-400 uppercase tracking-widest pl-1">Transaction Type</label>
-                      <div className="relative">
-                        <select
-                          required
-                          value={formType}
-                          onChange={(e) => setFormType(e.target.value)}
-                          className="w-full bg-white dark:bg-black border border-gray-200 dark:border-neutral-800 rounded-xl px-4 py-3 text-base font-bold text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-orange-500/50 appearance-none cursor-pointer min-h-[48px]"
-                        >
-                          {Object.entries(TYPE_MAP).map(([val, cfg]) => (
-                            <option key={val} value={val}>{cfg.label}</option>
-                          ))}
-                        </select>
-                        <ChevronDown size={14} className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+                  <form onSubmit={handleLogTransaction} className={`space-y-4 ${activeUserModal.isPaid ? 'opacity-50 pointer-events-none' : ''}`}>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-1.5">
+                        <label className="text-[10px] font-bold text-gray-500 dark:text-neutral-400 uppercase tracking-widest pl-1">Transaction Type</label>
+                        <div className="relative">
+                          <select required value={formType} onChange={(e) => setFormType(e.target.value)} className="w-full bg-white dark:bg-black border border-gray-200 dark:border-neutral-800 rounded-xl px-4 py-3 text-sm font-bold text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-orange-500/50 appearance-none cursor-pointer min-h-[48px]">
+                            {ACTIVE_LOG_TYPES.map((val) => (
+                              <option key={val} value={val}>{TYPE_MAP[val].label}</option>
+                            ))}
+                          </select>
+                          <ChevronDown size={14} className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+                        </div>
+                      </div>
+
+                      <div className="space-y-1.5">
+                         <label className="text-[10px] font-bold text-gray-500 dark:text-neutral-400 uppercase tracking-widest pl-1">Payment Mode</label>
+                         <div className="relative">
+                           <select required value={formPaymentMode} onChange={(e) => setFormPaymentMode(e.target.value)} className="w-full bg-white dark:bg-black border border-gray-200 dark:border-neutral-800 rounded-xl px-4 py-3 text-sm font-bold text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-orange-500/50 appearance-none cursor-pointer min-h-[48px]">
+                             <option value="Cash">Cash</option>
+                             <option value="UPI">UPI</option>
+                             <option value="Bank Transfer">Bank Transfer</option>
+                             <option value="Cheque">Cheque</option>
+                             <option value="Deduction">Deduction (No Cash)</option>
+                           </select>
+                           <ChevronDown size={14} className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+                         </div>
                       </div>
                     </div>
 
@@ -882,35 +922,16 @@ function DashboardContent() {
                       <label className="text-[10px] font-bold text-gray-500 dark:text-neutral-400 uppercase tracking-widest pl-1">Amount</label>
                       <div className="relative">
                         <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-black font-mono">₹</span>
-                        <input
-                          required
-                          type="number"
-                          step="0.01"
-                          min="1"
-                          value={formAmount}
-                          onChange={(e) => setFormAmount(e.target.value)}
-                          placeholder="0.00"
-                          className="w-full bg-orange-50 dark:bg-orange-900/10 border border-orange-200 dark:border-orange-900/30 rounded-xl py-3 pl-8 pr-4 text-base font-black font-mono text-orange-700 dark:text-orange-400 outline-none focus:ring-2 focus:ring-orange-500/50 min-h-[48px]"
-                        />
+                        <input required type="number" step="0.01" min="1" value={formAmount} onChange={(e) => setFormAmount(e.target.value)} placeholder="0.00" className="w-full bg-orange-50 dark:bg-orange-900/10 border border-orange-200 dark:border-orange-900/30 rounded-xl py-3 pl-8 pr-4 text-base font-black font-mono text-orange-700 dark:text-orange-400 outline-none focus:ring-2 focus:ring-orange-500/50 min-h-[48px]" />
                       </div>
                     </div>
 
                     <div className="space-y-1.5">
                       <label className="text-[10px] font-bold text-gray-500 dark:text-neutral-400 uppercase tracking-widest pl-1">Mandatory Remarks</label>
-                      <textarea
-                        required
-                        value={formRemarks}
-                        onChange={(e) => setFormRemarks(e.target.value)}
-                        placeholder="Reason for this transaction..."
-                        className="w-full bg-white dark:bg-black border border-gray-200 dark:border-neutral-800 rounded-xl px-4 py-3 text-sm font-medium text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-orange-500/50 resize-none h-20 custom-scrollbar"
-                      />
+                      <textarea required value={formRemarks} onChange={(e) => setFormRemarks(e.target.value)} placeholder="Reason for this transaction..." className="w-full bg-white dark:bg-black border border-gray-200 dark:border-neutral-800 rounded-xl px-4 py-3 text-sm font-medium text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-orange-500/50 resize-none h-20 custom-scrollbar" />
                     </div>
 
-                    <button
-                      type="submit"
-                      disabled={formSubmitting}
-                      className="w-full py-3.5 bg-gray-900 hover:bg-black dark:bg-white dark:hover:bg-gray-200 text-white dark:text-black text-xs font-black uppercase tracking-widest rounded-xl transition-all shadow-lg active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-2 min-h-[52px]"
-                    >
+                    <button type="submit" disabled={formSubmitting || activeUserModal.isPaid} className="w-full py-4 mb-24 text-white text-xs font-black uppercase tracking-widest rounded-xl transition-all shadow-lg active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-2 mt-4 min-h-[52px] bg-gray-900 hover:bg-black dark:bg-white dark:hover:bg-gray-200 dark:text-black shadow-gray-900/20 dark:shadow-white/10">
                       {formSubmitting ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} strokeWidth={3} />}
                       Submit Record
                     </button>
@@ -919,9 +940,7 @@ function DashboardContent() {
 
                 {/* RIGHT: TRANSACTION HISTORY */}
                 <div className="w-full md:w-1/2 p-4 md:p-6 overflow-y-auto custom-scrollbar bg-gray-50/50 dark:bg-[#050505] max-h-[45vh] md:max-h-none">
-                  <h3 className="text-xs font-black uppercase tracking-widest text-gray-400 mb-4 flex items-center gap-2">
-                    <History size={14} className="text-blue-500" /> Current Month History
-                  </h3>
+                  <h3 className="text-xs font-black uppercase tracking-widest text-gray-400 mb-4 flex items-center gap-2"><History size={14} className="text-blue-500" /> Current Month History</h3>
                   
                   {activeUserModal.txns.length === 0 ? (
                     <div className="flex flex-col items-center justify-center py-10 text-center opacity-50">
@@ -939,18 +958,17 @@ function DashboardContent() {
                                 <span className={`inline-flex px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-widest border ${T.bg} ${T.color} border-current opacity-80 mb-1`}>{T.label}</span>
                                 <p className={`font-mono font-black text-lg leading-none ${T.color}`}>{formatCurrency(txn.amount)}</p>
                               </div>
-                              <button
-                                onClick={() => handleVoidRecord(txn.id)}
-                                disabled={formSubmitting}
-                                className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg transition-colors min-w-[36px] min-h-[36px] flex items-center justify-center"
-                              >
+                              <button onClick={() => handleVoidRecord(txn.id)} disabled={formSubmitting || activeUserModal.isPaid} className={`p-2 rounded-lg transition-colors min-w-[36px] min-h-[36px] flex items-center justify-center ${activeUserModal.isPaid ? 'text-gray-300 dark:text-neutral-700 cursor-not-allowed' : 'text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10'}`}>
                                 <Trash2 size={14} />
                               </button>
                             </div>
                             <p className="text-xs font-bold text-gray-600 dark:text-neutral-400 mb-3 leading-snug">{txn.remarks}</p>
-                            <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest border-t border-gray-50 dark:border-neutral-900 pt-2">
-                              {new Date(txn.created_at).toLocaleDateString('en-IN', {month:'short', day:'numeric'})} by {txn.logged_by_name || 'System'}
-                            </p>
+                            <div className="flex items-center justify-between border-t border-gray-50 dark:border-neutral-900 pt-2">
+                               <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest">
+                                 {new Date(txn.created_at).toLocaleDateString('en-IN', {month:'short', day:'numeric'})} by {txn.logged_by_name || 'System'}
+                               </p>
+                               <p className="text-[9px] font-bold text-gray-500">{txn.payment_mode || 'Cash'}</p>
+                            </div>
                           </div>
                         );
                       })}
@@ -962,14 +980,13 @@ function DashboardContent() {
           </div>
         </div>
       )}
-
     </div>
   );
 }
 
-export default function DashboardWrapper() {
+export default function AdminDashboardPage() {
   return (
-    <Suspense fallback={<div className="flex justify-center py-20"><Loader2 className="animate-spin text-emerald-500" size={32} /></div>}>
+    <Suspense fallback={<div className="flex items-center justify-center h-screen"><Loader2 className="animate-spin text-emerald-500" size={40} /></div>}>
       <DashboardContent />
     </Suspense>
   );

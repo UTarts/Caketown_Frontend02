@@ -7,13 +7,12 @@ import {
   Building2, CalendarRange, ChevronDown, Loader2, Save, 
   Settings2, Plus, Trash2, ShieldCheck, MonitorSmartphone,
   CheckCircle2, XCircle, UserCog, Edit, KeyRound, MapPin, Users,
-  Briefcase, X
+  Briefcase, X, Package
 } from "lucide-react";
 
 const pad = (n, width = 2) => String(n).padStart(width, "0");
 
 export default function AdminSettingsPage() {
-  // FIXED: We now use standard Next.js hooks to safely track URL parameter changes
   const router = useRouter();
   const searchParams = useSearchParams();
   
@@ -41,15 +40,17 @@ export default function AdminSettingsPage() {
   const [departments, setDepartments] = useState([]);
   const [deptModal, setDeptModal] = useState(null);
   const [deptSubmitting, setDeptSubmitting] = useState(false);
-  
   const [newRoleName, setNewRoleName] = useState("");
 
-  // ─── FIXED: DYNAMIC URL LISTENER ───
+  // -- INVENTORY / EXTRA ITEMS STATE --
+  const [inventory, setInventory] = useState([]);
+  const [inventoryModal, setInventoryModal] = useState(null);
+  const [inventorySubmitting, setInventorySubmitting] = useState(false);
+
   useEffect(() => {
     const tab = searchParams.get('tab');
     if (tab && tab !== activeTab) {
       setActiveTab(tab);
-      // Silently clean the URL without triggering a page scroll or jump
       router.replace('/admin/settings', { scroll: false });
     }
   }, [searchParams, activeTab, router]);
@@ -62,19 +63,17 @@ export default function AdminSettingsPage() {
 
   const fetchGlobals = useCallback(async () => {
     setLoading(true);
-    const [bRes, uRes, dRes] = await Promise.all([
+    const [bRes, uRes, dRes, invRes] = await Promise.all([
       callApi("get_branches"),
       callApi("get_users"),
-      callApi("get_departments_roles")
+      callApi("get_departments_roles"),
+      callApi("get_inventory_items") // NEW ENDPOINT NEEDED
     ]);
     
-    if (bRes.status === "success") {
-      setBranches(bRes.data || []);
-    }
-    
+    if (bRes.status === "success") setBranches(bRes.data || []);
     if (uRes.status === "success") setAdmins((uRes.data || []).filter(u => u.role === 'admin'));
-    
     if (dRes.status === "success") setDepartments(dRes.data || []);
+    if (invRes?.status === "success") setInventory(invRes.data || []);
     
     setLoading(false);
   }, []);
@@ -184,40 +183,28 @@ export default function AdminSettingsPage() {
     if (deptModal.roles.length === 0) return alert("At least one role is required.");
 
     setDeptSubmitting(true);
-    
     const action = deptModal.action === 'create' ? 'create_department' : 'update_department';
     const payload = {
       department_name: deptModal.name,
       roles: JSON.stringify(deptModal.roles),
       admin_id: session?.id
     };
-
-    if (deptModal.action === 'edit' && deptModal.id) {
-      payload.id = deptModal.id;
-    }
+    if (deptModal.action === 'edit' && deptModal.id) payload.id = deptModal.id;
 
     const res = await callApi(action, payload);
+    setDeptSubmitting(false);
     
     if (res.status === "success") {
       setDeptModal(null);
       fetchGlobals();
-    } else {
-      alert(res.message || "Failed to save department.");
-    }
-    
-    setDeptSubmitting(false);
+    } else alert(res.message || "Failed to save department.");
   };
 
   const deleteDept = async (id) => {
-    if (!confirm("Are you sure you want to delete this department? Users assigned to this department will not be deleted, but their department field may act unexpectedly.")) return;
-    
+    if (!confirm("Are you sure you want to delete this department?")) return;
     const res = await callApi("delete_department", { id, admin_id: session?.id });
-    
-    if (res.status === "success") {
-      fetchGlobals();
-    } else {
-      alert(res.message || "Failed to delete department.");
-    }
+    if (res.status === "success") fetchGlobals();
+    else alert(res.message || "Failed to delete department.");
   };
 
   const addRoleToModal = () => {
@@ -228,6 +215,33 @@ export default function AdminSettingsPage() {
 
   const removeRoleFromModal = (idx) => {
     setDeptModal(prev => ({ ...prev, roles: prev.roles.filter((_, i) => i !== idx) }));
+  };
+
+  // ─── INVENTORY HANDLERS ──────────────────────────────────────
+  const handleInventorySubmit = async (e) => {
+    e.preventDefault();
+    setInventorySubmitting(true);
+    const action = inventoryModal.action === 'create' ? 'save_inventory_item' : 'update_inventory_item';
+    const payload = {
+      item_name: inventoryModal.name,
+      default_cost: parseFloat(inventoryModal.cost),
+      admin_id: session?.id
+    };
+    if (inventoryModal.action === 'edit') payload.item_id = inventoryModal.id;
+
+    const res = await callApi(action, payload);
+    setInventorySubmitting(false);
+    if (res.status === "success") {
+      setInventoryModal(null);
+      fetchGlobals();
+    } else alert(res.message || "Operation failed.");
+  };
+
+  const deleteInventoryItem = async (id) => {
+    if (!confirm("Delete this inventory item? Historical assignments will remain, but it won't be assignable anymore.")) return;
+    const res = await callApi("delete_inventory_item", { item_id: id, admin_id: session?.id });
+    if (res.status === "success") fetchGlobals();
+    else alert(res.message || "Failed to delete item.");
   };
 
   return (
@@ -256,6 +270,9 @@ export default function AdminSettingsPage() {
             <button onClick={() => setActiveTab("admins")} className={`px-4 py-2.5 rounded-lg text-xs font-black transition-all whitespace-nowrap flex items-center gap-2 ${activeTab === 'admins' ? 'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-400' : 'text-gray-500 hover:text-gray-900 dark:hover:text-white'}`}>
               <ShieldCheck size={14} /> Administrators
             </button>
+            <button onClick={() => setActiveTab("inventory")} className={`px-4 py-2.5 rounded-lg text-xs font-black transition-all whitespace-nowrap flex items-center gap-2 ${activeTab === 'inventory' ? 'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-400' : 'text-gray-500 hover:text-gray-900 dark:hover:text-white'}`}>
+              <Package size={14} /> Asset Tracking
+            </button>
             <button onClick={() => setActiveTab("matrix")} className={`px-4 py-2.5 rounded-lg text-xs font-black transition-all whitespace-nowrap flex items-center gap-2 ${activeTab === 'matrix' ? 'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-400' : 'text-gray-500 hover:text-gray-900 dark:hover:text-white'}`}>
               <CalendarRange size={14} /> Leave Matrix
             </button>
@@ -267,7 +284,51 @@ export default function AdminSettingsPage() {
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 md:gap-8 pb-10">
           
           {/* ══════════════════════════════════════════════════════════════════
-              TAB 1: LEAVE MATRIX
+              TAB 1: ASSET TRACKING / EXTRA ITEMS
+          ══════════════════════════════════════════════════════════════════ */}
+          {activeTab === "inventory" && (
+            <div className="xl:col-span-3">
+              <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 rounded-3xl overflow-hidden shadow-sm">
+                <div className="p-5 md:p-6 border-b border-gray-100 dark:border-neutral-900 bg-gray-50/50 dark:bg-[#111]/50 flex justify-between items-center">
+                   <div>
+                     <h2 className="text-lg font-black text-gray-900 dark:text-white">Company Assets & Gear</h2>
+                     <p className="text-xs text-gray-500 font-bold uppercase tracking-widest mt-1">Setup T-Shirts, Caps, and Items to track against employee salaries</p>
+                   </div>
+                   <button onClick={() => setInventoryModal({action: 'create', name: '', cost: ''})} className="flex items-center gap-2 px-4 py-2.5 bg-gray-900 hover:bg-black dark:bg-white dark:hover:bg-gray-200 text-white dark:text-black text-xs font-black uppercase tracking-widest rounded-xl transition-all shadow-lg active:scale-95">
+                     <Plus size={14} strokeWidth={3} /> Add Item
+                   </button>
+                </div>
+                
+                {loading ? (
+                   <div className="p-20 flex justify-center"><Loader2 className="animate-spin text-indigo-500" size={32} /></div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 p-6">
+                    {inventory.map(item => (
+                      <div key={item.id} className="border border-gray-200 dark:border-neutral-800 rounded-2xl p-5 bg-white dark:bg-[#111] relative group flex flex-col justify-between">
+                        <div className="flex justify-between items-start mb-2">
+                          <div className="w-10 h-10 rounded-xl bg-indigo-50 dark:bg-indigo-900/20 text-indigo-500 flex items-center justify-center">
+                            <Package size={20} />
+                          </div>
+                          <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button onClick={() => setInventoryModal({action: 'edit', id: item.id, name: item.item_name, cost: item.default_cost})} className="p-1.5 text-gray-500 hover:text-blue-500 bg-gray-50 dark:bg-black rounded-lg shadow-sm border border-gray-200 dark:border-neutral-800"><Edit size={14}/></button>
+                            <button onClick={() => deleteInventoryItem(item.id)} className="p-1.5 text-gray-500 hover:text-red-500 bg-gray-50 dark:bg-black rounded-lg shadow-sm border border-gray-200 dark:border-neutral-800"><Trash2 size={14}/></button>
+                          </div>
+                        </div>
+                        <div>
+                          <h3 className="font-black text-lg text-gray-900 dark:text-white mt-2">{item.item_name}</h3>
+                          <p className="text-sm font-mono font-bold text-gray-500 mt-1">Default Cost: ₹{parseFloat(item.default_cost).toLocaleString('en-IN')}</p>
+                        </div>
+                      </div>
+                    ))}
+                    {inventory.length === 0 && <div className="col-span-full p-8 text-center text-sm font-bold text-gray-400">No assets/items configured.</div>}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ══════════════════════════════════════════════════════════════════
+              TAB 2: LEAVE MATRIX
           ══════════════════════════════════════════════════════════════════ */}
           {activeTab === "matrix" && (
             <div className="xl:col-span-3 space-y-6 max-w-4xl mx-auto w-full">
@@ -368,7 +429,7 @@ export default function AdminSettingsPage() {
           )}
 
           {/* ══════════════════════════════════════════════════════════════════
-              TAB 2: DEPARTMENTS & ROLES
+              TAB 3: DEPARTMENTS & ROLES
           ══════════════════════════════════════════════════════════════════ */}
           {activeTab === "departments" && (
             <div className="xl:col-span-3">
@@ -413,7 +474,7 @@ export default function AdminSettingsPage() {
           )}
 
           {/* ══════════════════════════════════════════════════════════════════
-              TAB 3: BRANCHES
+              TAB 4: BRANCHES
           ══════════════════════════════════════════════════════════════════ */}
           {activeTab === "branches" && (
             <div className="xl:col-span-3">
@@ -483,7 +544,7 @@ export default function AdminSettingsPage() {
           )}
 
           {/* ══════════════════════════════════════════════════════════════════
-              TAB 4: ADMIN ACCOUNTS
+              TAB 5: ADMIN ACCOUNTS
           ══════════════════════════════════════════════════════════════════ */}
           {activeTab === "admins" && (
             <div className="xl:col-span-3">
@@ -547,6 +608,34 @@ export default function AdminSettingsPage() {
           MODALS
       ══════════════════════════════════════════════════════════════════ */}
       
+      {/* INVENTORY / ASSET MODAL */}
+      {inventoryModal && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[150] flex items-end md:items-center justify-center sm:p-4 shadow-[-10px_0_40px_rgba(0,0,0,0.2)]">
+          <div className="bg-white dark:bg-[#0a0a0a] border border-gray-200 dark:border-neutral-800 w-full md:max-w-sm rounded-t-3xl md:rounded-3xl shadow-2xl animate-in slide-in-from-bottom-full md:zoom-in-95 duration-200 flex flex-col">
+            <div className="p-5 border-b border-gray-100 dark:border-neutral-900 flex justify-between items-center bg-gray-50/50 dark:bg-[#111] rounded-t-3xl shrink-0">
+              <h2 className="text-sm font-black flex items-center gap-2"><Package size={16} className="text-indigo-500" /> {inventoryModal.action === 'create' ? 'Add Item' : 'Edit Item'}</h2>
+              <button onClick={() => setInventoryModal(null)} className="p-2 bg-gray-100 dark:bg-neutral-900 rounded-full hover:bg-gray-200 transition-colors text-gray-600 dark:text-neutral-400"><XCircle size={16} /></button>
+            </div>
+            <form onSubmit={handleInventorySubmit} className="p-5 md:p-6 space-y-5 pb-safe">
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-gray-500 dark:text-neutral-400 uppercase tracking-widest pl-1">Item Name</label>
+                <input required autoFocus type="text" value={inventoryModal.name} onChange={(e) => setInventoryModal({...inventoryModal, name: e.target.value})} placeholder="e.g. Employee T-Shirt" className="w-full bg-gray-50 dark:bg-[#111] border border-gray-200 dark:border-neutral-800 rounded-xl px-4 py-3 text-sm font-bold text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/50" />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-bold text-gray-500 dark:text-neutral-400 uppercase tracking-widest pl-1">Default Valuation / Cost</label>
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-black font-mono">₹</span>
+                  <input required type="number" step="1" min="0" value={inventoryModal.cost} onChange={(e) => setInventoryModal({...inventoryModal, cost: e.target.value})} placeholder="0.00" className="w-full bg-gray-50 dark:bg-[#111] border border-gray-200 dark:border-neutral-800 rounded-xl py-3 pl-8 pr-4 text-base font-black font-mono text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-indigo-500/50" />
+                </div>
+              </div>
+              <button type="submit" disabled={inventorySubmitting} className="w-full py-3.5 bg-gray-900 hover:bg-black dark:bg-white dark:hover:bg-gray-200 text-white dark:text-black text-xs font-black uppercase tracking-widest rounded-xl transition-all shadow-lg active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2 mt-2">
+                {inventorySubmitting ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} strokeWidth={3} />} {inventoryModal.action === 'create' ? 'Create Asset' : 'Save Changes'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Department Modal */}
       {deptModal && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[150] flex items-end md:items-center justify-center sm:p-4 shadow-[-10px_0_40px_rgba(0,0,0,0.2)]">
