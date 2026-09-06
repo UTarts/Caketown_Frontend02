@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { callApi } from "@/lib/apiClient";
 import {
   CalendarDays, Loader2, Edit2, X, Check, Search, 
-  ChevronDown, Building2, Calendar, CheckCircle2, XCircle, Clock, Activity, Coffee, History, XCircle2, canEdit
+  ChevronDown, Building2, Calendar, CheckCircle2, XCircle, Clock, Activity, Coffee, History, XCircle2, canEdit, Download
 } from "lucide-react";
 
 // ─── HELPERS ───────────────────────────────────────────────────────────────
@@ -211,12 +211,12 @@ function AttendanceLedgerContent() {
     try { setSession(JSON.parse(raw)); } catch {}
   }, []);
 
-  const loadAttendance = useCallback(async () => {
+  const loadAttendance = useCallback(async (isSilent = false) => {
     if (!branchId || branchId === 'all') return;
-    setLoading(true);
+    if (!isSilent) setLoading(true);
     const res = await callApi("get_monthly_attendance", { branch_id: branchId, month: finMonth, year: finYear });
     if (res.status === "success") setAttendanceGrid(res.data);
-    setLoading(false);
+    if (!isSilent) setLoading(false);
   }, [branchId, finMonth, finYear]);
 
   const loadLeaveRequests = useCallback(async () => {
@@ -258,7 +258,7 @@ function AttendanceLedgerContent() {
     setOverrideSubmitting(false);
     if (res?.status === "success") { 
       setOverrideTarget(null); 
-      loadAttendance();
+      loadAttendance(true);
     } else {
       alert(res?.message || "A critical server error occurred. Please check database logs.");
     }
@@ -278,10 +278,64 @@ function AttendanceLedgerContent() {
       setLeaveActionModal(null);
       setLeaveRemark("");
       loadLeaveRequests();
-      loadAttendance(); 
+      loadAttendance(true); 
     } else {
       alert(res.message || "Failed to update leave status.");
     }
+  };
+
+  const exportToExcel = () => {
+    if (!attendanceGrid || attendanceGrid.length === 0) return alert("No data to export.");
+
+    let csv = "Employee,Department,Role,Target Shift,";
+    for (let i = 1; i <= daysInMonth; i++) csv += `${i},`;
+    csv += "Total F,Total H,Total A,Total L,Earned Leaves,Total Hours\n";
+
+    attendanceGrid.forEach(row => {
+      let rowData = [
+        `"${row.name || ''}"`,
+        `"${row.department || 'Unassigned'}"`,
+        `"${row.role || ''}"`,
+        `"${row.standard_shift_hours || 10}h"`,
+      ];
+
+      let totF = 0, totH = 0, totA = 0, totL = 0, totMins = 0;
+      const todayStr = getLocalDate();
+
+      for (let i = 1; i <= daysInMonth; i++) {
+        const dateStr = `${finYear}-${pad(finMonth)}-${pad(i)}`;
+        const dayData = row.days?.[dateStr] || null;
+        let rawStatus = dayData?.status || "-";
+        
+        if (rawStatus === "M") rawStatus = "A";
+        if (rawStatus !== "-" && dateStr > todayStr && !dayData?.override) rawStatus = "-";
+        
+        let mathStatus = rawStatus === "P" ? "F" : rawStatus;
+        if (mathStatus === "F" || mathStatus === "PH") totF++;
+        else if (mathStatus === "H") totH++;
+        else if (mathStatus === "A") totA++;
+        else if (mathStatus === "L") totL++;
+
+        if (dayData?.minutes) totMins += parseInt(dayData.minutes);
+
+        rowData.push(rawStatus === "P" ? "F" : rawStatus);
+      }
+
+      const earnedLeaves = calcPaidHolidays(totF + (totH * 0.5), row.max_paid_leaves_cap ?? row.max_paid_leaves ?? 4);
+      const formattedHours = (totMins / 60).toFixed(2) + "h";
+
+      rowData.push(totF, totH, totA, totL, earnedLeaves, `"${formattedHours}"`);
+      csv += rowData.join(",") + "\n";
+    });
+
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.setAttribute("download", `Attendance_Ledger_${finMonth}_${finYear}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   if (branchId === "all") {
@@ -370,6 +424,13 @@ function AttendanceLedgerContent() {
             >
               <span className="md:hidden">Load</span>
               <span className="hidden md:inline">Load Period</span>
+            </button>
+            <button
+              onClick={exportToExcel}
+              className="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-black rounded-xl active:scale-95 transition-all min-h-[44px] md:min-h-0 flex items-center gap-2 shadow-sm"
+            >
+              <Download size={14} />
+              <span className="hidden md:inline">Export CSV</span>
             </button>
           </div>
 
@@ -737,9 +798,21 @@ function AttendanceLedgerContent() {
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold text-gray-500 dark:text-neutral-400 uppercase tracking-widest pl-1">Reason (Audit Log)</label>
+                  <div className="flex justify-between items-end">
+                    <label className="text-[10px] font-bold text-gray-500 dark:text-neutral-400 uppercase tracking-widest pl-1">Reason (Optional)</label>
+                    <select 
+                      onChange={(e) => { if(e.target.value) setOverrideForm({...overrideForm, reason: e.target.value}) }}
+                      className="text-[10px] font-bold bg-gray-100 dark:bg-neutral-800 text-gray-600 dark:text-neutral-300 rounded-lg px-2 py-1 outline-none cursor-pointer"
+                    >
+                      <option value="">Quick Select...</option>
+                      <option value="Forgot to punch out">Forgot to punch out</option>
+                      <option value="Device/Network issue">Device/Network issue</option>
+                      <option value="Approved late arrival">Approved late arrival</option>
+                      <option value="Manual duty correction">Manual duty correction</option>
+                      <option value="Transferred branch">Transferred branch</option>
+                    </select>
+                  </div>
                   <textarea
-                    required
                     value={overrideForm.reason}
                     onChange={e => setOverrideForm({ ...overrideForm, reason: e.target.value })}
                     className="w-full bg-gray-50 dark:bg-[#111] border border-gray-200 dark:border-neutral-800 rounded-2xl px-4 py-3.5 text-sm font-medium text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-blue-500/50 transition-all resize-none h-20 custom-scrollbar"

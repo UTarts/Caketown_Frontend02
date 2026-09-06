@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 
 const DETECTION_INTERVAL_MS = 450;
-const DETECTION_INPUT_SIZE = 160;
+const DETECTION_INPUT_SIZE = 224;
 const CAMERA_WIDTH = 480;
 const CAMERA_HEIGHT = 640;
 
@@ -255,7 +255,7 @@ export default function BranchStaffPage() {
             video,
             new faceapi.TinyFaceDetectorOptions({
               inputSize: DETECTION_INPUT_SIZE,
-              scoreThreshold: 0.5,
+              scoreThreshold: 0.65,
             })
           )
           .withFaceLandmarks()

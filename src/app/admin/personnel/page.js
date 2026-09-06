@@ -72,23 +72,35 @@ const Asterisk = () => <span className="text-red-500 ml-1">*</span>;
 // ─── UPGRADED: PHP FORCED DOWNLOAD PROTOCOL ───
 const getFileUrl = (path) => {
   if (!path) return "";
-  let base = API_BASE_URL;
-  if (base.endsWith("/api.php")) base = base.replace("/api.php", "");
-  return `${base.replace(/\/$/, '')}/${path.replace(/^\//, '')}`;
+  // Extract just the relative path
+  let rawPath = path.replace(API_BASE_URL, '').replace('/api.php', '').replace(/^\//, '');
+  
+  // Route through the secure PHP viewer to bypass server folder restrictions
+  return `${API_BASE_URL}/api.php?action=view_document&path=${encodeURIComponent(rawPath)}`;
 };
 
-const forceDownload = (fileUrl, fileName) => {
-  // Extract just the relative path from the full URL
-  const rawPath = fileUrl.replace(API_BASE_URL, '').replace('/api.php', '').replace(/^\//, '');
-  // Route it to the new PHP force download action
-  const downloadUrl = `${API_BASE_URL}/api.php?action=force_download&path=${encodeURIComponent(rawPath)}`;
-  
-  const a = document.createElement("a");
-  a.href = downloadUrl;
-  a.download = fileName || "document";
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
+const forceDownload = async (fileUrl, fileName) => {
+  try {
+    // Fetch the file as a binary blob to guarantee no new tabs open
+    const response = await fetch(fileUrl);
+    if (!response.ok) throw new Error("File fetch failed");
+    
+    const blob = await response.blob();
+    const blobUrl = window.URL.createObjectURL(blob);
+    
+    const a = document.createElement("a");
+    a.href = blobUrl;
+    a.download = fileName || "document";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    
+    // Free up memory immediately after download
+    window.URL.revokeObjectURL(blobUrl);
+  } catch (error) {
+    console.error("Download error:", error);
+    alert("Failed to download document. It may have been removed.");
+  }
 };
 
 const SearchableDropdown = ({ options, value, onChange, placeholder, disabled }) => {

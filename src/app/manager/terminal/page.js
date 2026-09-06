@@ -274,9 +274,13 @@ export default function BiometricTerminal() {
       faceapi.matchDimensions(canvas, displaySize);
 
       try {
-        // OPTIMIZATION: Dropped inputSize from 320 to 160. This is a 4x reduction in pixel processing load.
-        const detection = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 160, scoreThreshold: 0.5 }))
-          .withFaceLandmarks().withFaceDescriptor();
+        const options = new faceapi.TinyFaceDetectorOptions({ 
+          inputSize: 224, 
+          scoreThreshold: 0.65 
+        });
+
+        // Step 1: Lightweight face detection only (No heavy landmarks/descriptors yet)
+        const detection = await faceapi.detectSingleFace(video, options);
 
         const ctx = canvas.getContext("2d");
         ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -287,8 +291,33 @@ export default function BiometricTerminal() {
           return;
         }
 
-        const resized = faceapi.resizeResults(detection, displaySize);
-        const bestMatch = faceMatcherRef.current.findBestMatch(detection.descriptor);
+        // Step 2: Skip heavy extraction if the face is too far/small (Gatekeeper)
+        if (detection.box.width < 110 || detection.box.height < 110) {
+          setSystemMessage({ text: "Please step closer...", type: "idle" });
+          
+          // Optional: Draw a yellow box to guide them closer without running full recognition
+          const x = canvas.width - detection.box.x - detection.box.width;
+          ctx.strokeStyle = "#f59e0b";
+          ctx.lineWidth = 4;
+          ctx.strokeRect(x, detection.box.y, detection.box.width, detection.box.height);
+          
+          processingRef.current = false;
+          return;
+        }
+
+        // Step 3: Extract landmarks and descriptor ONLY for valid, close faces
+        const fullDetection = await faceapi
+          .detectSingleFace(video, options)
+          .withFaceLandmarks()
+          .withFaceDescriptor();
+
+        if (!fullDetection) {
+          processingRef.current = false;
+          return;
+        }
+
+        const resized = faceapi.resizeResults(fullDetection, displaySize);
+        const bestMatch = faceMatcherRef.current.findBestMatch(fullDetection.descriptor);
 
         if (!bestMatch || bestMatch.label === "unknown") {
           drawPremiumBox(ctx, resized.detection.box, "UNKNOWN", "#ef4444", canvas.width); 
